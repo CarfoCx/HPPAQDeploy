@@ -1,0 +1,30 @@
+# .NET Core
+bin/
+obj/
+publish/
+publish_output/
+*.user
+*.suo
+.vs/
+.idea/
+
+# Large binaries and SoftPaqs
+*.exe
+*.cva
+!src/**/*.exe
+!tests/**/*.exe
+hp-hpia-*.exe
+windowsdesktop-runtime-*.exe
+
+# App Data and Logs
+Logs/
+Data/
+HPIA/
+Repository/
+*.db
+*.db-shm
+*.db-wal
+
+# OS files
+.DS_Store
+Thumbs.db

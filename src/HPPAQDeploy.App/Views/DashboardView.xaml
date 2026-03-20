@@ -1,0 +1,533 @@
+<UserControl x:Class="HPPAQDeploy.App.Views.DashboardView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:materialDesign="http://materialdesigninxaml.net/winfx/xaml/themes"
+             xmlns:converters="clr-namespace:HPPAQDeploy.App.Converters">
+
+    <UserControl.Resources>
+        <converters:StatusToColorConverter x:Key="StatusToColor" />
+        <converters:ComplianceToColorConverter x:Key="ComplianceToColor" />
+        <converters:NonZeroToVisibilityConverter x:Key="NonZeroToVis" />
+        <BooleanToVisibilityConverter x:Key="BoolToVis" />
+    </UserControl.Resources>
+
+    <ScrollViewer VerticalScrollBarVisibility="Auto">
+        <StackPanel>
+            <!-- Header -->
+            <DockPanel Margin="0,0,0,20">
+                <StackPanel DockPanel.Dock="Left">
+                    <TextBlock Text="Dashboard" Style="{StaticResource PageTitle}" />
+                    <TextBlock Text="Overview of fleet status and compliance" Style="{StaticResource PageSubtitle}" />
+                </StackPanel>
+                <Button DockPanel.Dock="Right" HorizontalAlignment="Right"
+                        Style="{StaticResource SecondaryButton}"
+                        Command="{Binding RefreshCommand}"
+                        Padding="16,6">
+                    <StackPanel Orientation="Horizontal">
+                        <materialDesign:PackIcon Kind="Refresh" Width="16" Height="16"
+                                                 VerticalAlignment="Center" Margin="0,0,6,0" />
+                        <TextBlock Text="Refresh" VerticalAlignment="Center" />
+                    </StackPanel>
+                </Button>
+            </DockPanel>
+
+            <!-- Scheduled Scan Status -->
+            <Border CornerRadius="6" Padding="16,8" Margin="0,0,0,16"
+                    Background="#10FFFFFF" BorderBrush="{StaticResource BorderSubtleBrush}"
+                    BorderThickness="1">
+                <StackPanel Orientation="Horizontal">
+                    <materialDesign:PackIcon Kind="ClockOutline" Width="18" Height="18"
+                                             Foreground="{StaticResource TextSecondaryBrush}"
+                                             VerticalAlignment="Center" Margin="0,0,8,0" />
+                    <TextBlock Text="{Binding ScheduledScanStatusText}" FontSize="13"
+                               Foreground="{StaticResource TextSecondaryBrush}"
+                               VerticalAlignment="Center" />
+                </StackPanel>
+            </Border>
+
+
+            <!-- Stats Cards Row -->
+            <UniformGrid Rows="1" Columns="4" Margin="0,0,0,20">
+                <!-- Total Devices -->
+                <Border Style="{StaticResource AppCard}" Margin="0,0,8,0"
+                        ToolTip="Total HP devices discovered on your network">
+                    <Grid>
+                        <Border Width="4" HorizontalAlignment="Left" Margin="-16,-16,0,-16"
+                                Background="{StaticResource HpBlueBrush}" CornerRadius="8,0,0,8" Opacity="0.5" />
+                        <StackPanel Margin="4,0,0,0">
+                            <DockPanel>
+                                <materialDesign:PackIcon Kind="Monitor" Width="24" Height="24"
+                                                         Foreground="{StaticResource HpBlueBrush}"
+                                                         DockPanel.Dock="Right" />
+                                <TextBlock Text="{Binding TotalDevices}" Style="{StaticResource StatValue}" />
+                            </DockPanel>
+                            <TextBlock Text="Total Devices" Style="{StaticResource StatLabel}" />
+                        </StackPanel>
+                    </Grid>
+                </Border>
+
+                <!-- Online -->
+                <Border Style="{StaticResource AppCard}" Margin="4,0"
+                        ToolTip="Devices currently reachable on the network">
+                    <Grid>
+                        <Border Width="4" HorizontalAlignment="Left" Margin="-16,-16,0,-16"
+                                Background="{StaticResource AccentGreenBrush}" CornerRadius="8,0,0,8" Opacity="0.5" />
+                        <StackPanel Margin="4,0,0,0">
+                            <DockPanel>
+                                <materialDesign:PackIcon Kind="CheckCircle" Width="24" Height="24"
+                                                         Foreground="{StaticResource AccentGreenBrush}"
+                                                         DockPanel.Dock="Right" />
+                                <TextBlock Text="{Binding OnlineDevices}" Style="{StaticResource StatValue}" />
+                            </DockPanel>
+                            <TextBlock Text="Online" Style="{StaticResource StatLabel}" />
+                        </StackPanel>
+                    </Grid>
+                </Border>
+
+                <!-- Updates Available -->
+                <Border Style="{StaticResource AppCard}" Margin="4,0"
+                        ToolTip="Total driver/firmware updates available across all devices">
+                    <Grid>
+                        <Border Width="4" HorizontalAlignment="Left" Margin="-16,-16,0,-16"
+                                Background="{StaticResource AccentOrangeBrush}" CornerRadius="8,0,0,8" Opacity="0.5" />
+                        <StackPanel Margin="4,0,0,0">
+                            <DockPanel>
+                                <materialDesign:PackIcon Kind="Download" Width="24" Height="24"
+                                                         Foreground="{StaticResource AccentOrangeBrush}"
+                                                         DockPanel.Dock="Right" />
+                                <TextBlock Text="{Binding PendingUpdates}" Style="{StaticResource StatValue}" />
+                            </DockPanel>
+                            <TextBlock Text="Pending Updates" Style="{StaticResource StatLabel}" />
+                        </StackPanel>
+                    </Grid>
+                </Border>
+
+                <!-- Critical -->
+                <Border Style="{StaticResource AppCard}" Margin="8,0,0,0"
+                        ToolTip="High-priority updates that should be installed immediately">
+                    <Grid>
+                        <Border Width="4" HorizontalAlignment="Left" Margin="-16,-16,0,-16"
+                                Background="{StaticResource AccentRedBrush}" CornerRadius="8,0,0,8" Opacity="0.5" />
+                        <StackPanel Margin="4,0,0,0">
+                            <DockPanel>
+                                <materialDesign:PackIcon Kind="AlertCircle" Width="24" Height="24"
+                                                         Foreground="{StaticResource AccentRedBrush}"
+                                                         DockPanel.Dock="Right" />
+                                <TextBlock Text="{Binding CriticalUpdates}" Style="{StaticResource StatValue}" />
+                            </DockPanel>
+                            <TextBlock Text="Critical Updates" Style="{StaticResource StatLabel}" />
+                        </StackPanel>
+                    </Grid>
+                </Border>
+            </UniformGrid>
+
+            <!-- Compliance Overview & Update Summary -->
+            <UniformGrid Rows="1" Columns="2" Margin="0,0,0,20">
+                <!-- Compliance Overview Card -->
+                <Border Style="{StaticResource AppCard}" Margin="0,0,8,0">
+                    <StackPanel>
+                        <TextBlock Text="Compliance Overview" Style="{StaticResource SectionTitle}" Margin="0,0,0,16" />
+
+                        <!-- No data state -->
+                        <StackPanel HorizontalAlignment="Center" Margin="0,8,0,16">
+                            <StackPanel.Style>
+                                <Style TargetType="StackPanel">
+                                    <Setter Property="Visibility" Value="Collapsed" />
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding TotalDevices}" Value="0">
+                                            <Setter Property="Visibility" Value="Visible" />
+                                        </DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </StackPanel.Style>
+                            <materialDesign:PackIcon Kind="DatabaseOff" Width="32" Height="32"
+                                                     Foreground="{StaticResource TextSecondaryBrush}"
+                                                     HorizontalAlignment="Center" Opacity="0.5" />
+                            <TextBlock Text="No data yet" Style="{StaticResource SubtitleText}"
+                                       Foreground="{StaticResource TextSecondaryBrush}"
+                                       HorizontalAlignment="Center" Margin="0,8,0,0" />
+                        </StackPanel>
+
+                        <!-- Compliance percentage display (visible when devices exist) -->
+                        <StackPanel HorizontalAlignment="Center" Margin="0,4,0,16">
+                            <StackPanel.Style>
+                                <Style TargetType="StackPanel">
+                                    <Setter Property="Visibility" Value="Visible" />
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding TotalDevices}" Value="0">
+                                            <Setter Property="Visibility" Value="Collapsed" />
+                                        </DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </StackPanel.Style>
+                            <StackPanel Orientation="Horizontal" HorizontalAlignment="Center">
+                                <!-- Checkmark icon for 100% -->
+                                <materialDesign:PackIcon Kind="CheckCircle" Width="28" Height="28"
+                                                         VerticalAlignment="Center" Margin="0,0,8,0">
+                                    <materialDesign:PackIcon.Style>
+                                        <Style TargetType="materialDesign:PackIcon">
+                                            <Setter Property="Foreground" Value="{StaticResource AccentGreenBrush}" />
+                                            <Setter Property="Visibility" Value="Collapsed" />
+                                            <Style.Triggers>
+                                                <DataTrigger Binding="{Binding CompliancePercent}" Value="100">
+                                                    <Setter Property="Visibility" Value="Visible" />
+                                                </DataTrigger>
+                                            </Style.Triggers>
+                                        </Style>
+                                    </materialDesign:PackIcon.Style>
+                                </materialDesign:PackIcon>
+                                <TextBlock FontSize="36" FontWeight="Bold" HorizontalAlignment="Center"
+                                           Foreground="{Binding CompliancePercent, Converter={StaticResource ComplianceToColor}}"
+                                           ToolTip="Green: &gt;90% compliant&#x0a;Yellow: 50-90% compliant&#x0a;Red: &lt;50% compliant">
+                                    <Run Text="{Binding CompliancePercent, Mode=OneWay, StringFormat={}{0:0.#}}" />
+                                    <Run Text="%" />
+                                </TextBlock>
+                            </StackPanel>
+                            <TextBlock Text="Compliant" Style="{StaticResource SubtitleText}"
+                                       HorizontalAlignment="Center" Margin="0,2,0,0"
+                                       Foreground="{Binding CompliancePercent, Converter={StaticResource ComplianceToColor}}" />
+                        </StackPanel>
+
+                        <!-- Compliance progress bar -->
+                        <ProgressBar Value="{Binding CompliancePercent}" Maximum="100" Height="6"
+                                     Margin="0,4,0,12"
+                                     Foreground="{Binding CompliancePercent, Converter={StaticResource ComplianceToColor}}"
+                                     Background="{StaticResource ProgressBarTrackBrush}">
+                            <ProgressBar.Style>
+                                <Style TargetType="ProgressBar">
+                                    <Setter Property="Visibility" Value="Visible" />
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding TotalDevices}" Value="0">
+                                            <Setter Property="Visibility" Value="Collapsed" />
+                                        </DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </ProgressBar.Style>
+                        </ProgressBar>
+
+                        <!-- Stat badges row -->
+                        <StackPanel Orientation="Horizontal" HorizontalAlignment="Center">
+                            <StackPanel.Style>
+                                <Style TargetType="StackPanel">
+                                    <Setter Property="Visibility" Value="Visible" />
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding TotalDevices}" Value="0">
+                                            <Setter Property="Visibility" Value="Collapsed" />
+                                        </DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </StackPanel.Style>
+                            <!-- Up to Date badge -->
+                            <Border CornerRadius="12" Padding="12,6" Margin="4,0"
+                                    Background="{StaticResource AccentGreenBrush}" Opacity="0.9">
+                                <StackPanel Orientation="Horizontal">
+                                    <materialDesign:PackIcon Kind="CheckCircle" Width="16" Height="16"
+                                                             Foreground="White" VerticalAlignment="Center" Margin="0,0,6,0" />
+                                    <TextBlock Foreground="White" FontWeight="SemiBold" FontSize="12" VerticalAlignment="Center">
+                                        <Run Text="{Binding DevicesUpToDate, Mode=OneWay}" />
+                                        <Run Text=" Up to Date" />
+                                    </TextBlock>
+                                </StackPanel>
+                            </Border>
+                            <!-- Need Updates badge -->
+                            <Border CornerRadius="12" Padding="12,6" Margin="4,0"
+                                    Background="{StaticResource AccentOrangeBrush}" Opacity="0.9">
+                                <StackPanel Orientation="Horizontal">
+                                    <materialDesign:PackIcon Kind="AlertCircleOutline" Width="16" Height="16"
+                                                             Foreground="White" VerticalAlignment="Center" Margin="0,0,6,0" />
+                                    <TextBlock Foreground="White" FontWeight="SemiBold" FontSize="12" VerticalAlignment="Center">
+                                        <Run Text="{Binding DevicesWithUpdates, Mode=OneWay}" />
+                                        <Run Text=" Need Updates" />
+                                    </TextBlock>
+                                </StackPanel>
+                            </Border>
+                            <!-- Critical badge -->
+                            <Border CornerRadius="12" Padding="12,6" Margin="4,0"
+                                    Background="{StaticResource AccentRedBrush}" Opacity="0.9">
+                                <StackPanel Orientation="Horizontal">
+                                    <materialDesign:PackIcon Kind="Alert" Width="16" Height="16"
+                                                             Foreground="White" VerticalAlignment="Center" Margin="0,0,6,0" />
+                                    <TextBlock Foreground="White" FontWeight="SemiBold" FontSize="12" VerticalAlignment="Center">
+                                        <Run Text="{Binding DevicesWithCritical, Mode=OneWay}" />
+                                        <Run Text=" Critical" />
+                                    </TextBlock>
+                                </StackPanel>
+                            </Border>
+                            <!-- Never Scanned badge -->
+                            <Border CornerRadius="12" Padding="12,6" Margin="4,0"
+                                    Background="{StaticResource DividerBrush}" Opacity="0.9"
+                                    Visibility="{Binding NeverScannedCount, Converter={StaticResource NonZeroToVis}}">
+                                <StackPanel Orientation="Horizontal">
+                                    <materialDesign:PackIcon Kind="HelpCircleOutline" Width="16" Height="16"
+                                                             Foreground="White" VerticalAlignment="Center" Margin="0,0,6,0" />
+                                    <TextBlock Foreground="White" FontWeight="SemiBold" FontSize="12" VerticalAlignment="Center">
+                                        <Run Text="{Binding NeverScannedCount, Mode=OneWay}" />
+                                        <Run Text=" Not Scanned" />
+                                    </TextBlock>
+                                </StackPanel>
+                            </Border>
+                        </StackPanel>
+
+                        <!-- Export Buttons -->
+                        <StackPanel Orientation="Horizontal" HorizontalAlignment="Center" Margin="0,16,0,0">
+                            <Button Style="{StaticResource SecondaryButton}" Content="Export CSV"
+                                    Command="{Binding ExportCsvReportCommand}" Margin="0,0,8,0"
+                                    ToolTip="Export compliance data as CSV file" />
+                            <Button Style="{StaticResource SecondaryButton}" Content="Export HTML Report"
+                                    Command="{Binding ExportHtmlReportCommand}"
+                                    ToolTip="Generate and open an HTML compliance report" />
+                        </StackPanel>
+                        <TextBlock Text="{Binding ExportStatus}" Style="{StaticResource BadgeText}"
+                                   Foreground="{StaticResource TextSecondaryBrush}"
+                                   HorizontalAlignment="Center" Margin="0,8,0,0"
+                                   TextWrapping="Wrap" />
+                    </StackPanel>
+                </Border>
+
+                <!-- Update Summary Card -->
+                <Border Style="{StaticResource AppCard}" Margin="8,0,0,0">
+                    <StackPanel>
+                        <TextBlock Text="Update Summary" Style="{StaticResource SectionTitle}" Margin="0,0,0,16" />
+
+                        <!-- No data state -->
+                        <StackPanel HorizontalAlignment="Center" Margin="0,8,0,0">
+                            <StackPanel.Style>
+                                <Style TargetType="StackPanel">
+                                    <Setter Property="Visibility" Value="Collapsed" />
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding TotalDevices}" Value="0">
+                                            <Setter Property="Visibility" Value="Visible" />
+                                        </DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </StackPanel.Style>
+                            <materialDesign:PackIcon Kind="PackageVariantClosed" Width="32" Height="32"
+                                                     Foreground="{StaticResource TextSecondaryBrush}"
+                                                     HorizontalAlignment="Center" Opacity="0.5" />
+                            <TextBlock Text="No data yet" Style="{StaticResource SubtitleText}"
+                                       Foreground="{StaticResource TextSecondaryBrush}"
+                                       HorizontalAlignment="Center" Margin="0,8,0,0" />
+                        </StackPanel>
+
+                        <!-- Update counts by severity (visible when devices exist) -->
+                        <StackPanel>
+                            <StackPanel.Style>
+                                <Style TargetType="StackPanel">
+                                    <Setter Property="Visibility" Value="Visible" />
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding TotalDevices}" Value="0">
+                                            <Setter Property="Visibility" Value="Collapsed" />
+                                        </DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </StackPanel.Style>
+
+                            <!-- Total -->
+                            <DockPanel Margin="0,0,0,12">
+                                <TextBlock Text="Total Pending" Style="{StaticResource BodyText}"
+                                           VerticalAlignment="Center" DockPanel.Dock="Left" />
+                                <TextBlock Text="{Binding TotalPendingUpdates}" Style="{StaticResource StatValue}"
+                                           HorizontalAlignment="Right" FontSize="20" />
+                            </DockPanel>
+
+                            <!-- Critical row -->
+                            <DockPanel Margin="0,0,0,10">
+                                <Border CornerRadius="10" Padding="10,4" DockPanel.Dock="Right"
+                                        Background="{StaticResource AccentRedBrush}" Opacity="0.9"
+                                        HorizontalAlignment="Right">
+                                    <TextBlock Foreground="White" FontWeight="Bold" FontSize="13"
+                                               HorizontalAlignment="Center">
+                                        <Run Text="{Binding CriticalUpdates, Mode=OneWay}" />
+                                    </TextBlock>
+                                </Border>
+                                <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                                    <materialDesign:PackIcon Kind="AlertCircle" Width="18" Height="18"
+                                                             Foreground="{StaticResource AccentRedBrush}"
+                                                             VerticalAlignment="Center" Margin="0,0,8,0" />
+                                    <TextBlock Text="Critical" Style="{StaticResource BodyText}" VerticalAlignment="Center" />
+                                </StackPanel>
+                            </DockPanel>
+
+                            <!-- Recommended row -->
+                            <DockPanel Margin="0,0,0,10">
+                                <Border CornerRadius="10" Padding="10,4" DockPanel.Dock="Right"
+                                        Background="{StaticResource AccentOrangeBrush}" Opacity="0.9"
+                                        HorizontalAlignment="Right">
+                                    <TextBlock Foreground="White" FontWeight="Bold" FontSize="13"
+                                               HorizontalAlignment="Center">
+                                        <Run Text="{Binding RecommendedUpdates, Mode=OneWay}" />
+                                    </TextBlock>
+                                </Border>
+                                <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                                    <materialDesign:PackIcon Kind="AlertCircleOutline" Width="18" Height="18"
+                                                             Foreground="{StaticResource AccentOrangeBrush}"
+                                                             VerticalAlignment="Center" Margin="0,0,8,0" />
+                                    <TextBlock Text="Recommended" Style="{StaticResource BodyText}" VerticalAlignment="Center" />
+                                </StackPanel>
+                            </DockPanel>
+
+                            <!-- Optional row -->
+                            <DockPanel Margin="0,0,0,4">
+                                <Border CornerRadius="10" Padding="10,4" DockPanel.Dock="Right"
+                                        Background="{StaticResource HpBlueBrush}" Opacity="0.9"
+                                        HorizontalAlignment="Right">
+                                    <TextBlock Foreground="White" FontWeight="Bold" FontSize="13"
+                                               HorizontalAlignment="Center">
+                                        <Run Text="{Binding OptionalUpdates, Mode=OneWay}" />
+                                    </TextBlock>
+                                </Border>
+                                <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                                    <materialDesign:PackIcon Kind="InformationOutline" Width="18" Height="18"
+                                                             Foreground="{StaticResource HpBlueBrush}"
+                                                             VerticalAlignment="Center" Margin="0,0,8,0" />
+                                    <TextBlock Text="Optional" Style="{StaticResource BodyText}" VerticalAlignment="Center" />
+                                </StackPanel>
+                            </DockPanel>
+                        </StackPanel>
+                    </StackPanel>
+                </Border>
+            </UniformGrid>
+
+            <!-- Recent Devices -->
+            <DockPanel Margin="0,0,0,12"
+                       ToolTip="Showing the 10 most recently scanned devices">
+                <TextBlock Text="Recent Devices" Style="{StaticResource SectionTitle}"
+                           DockPanel.Dock="Left" />
+                <TextBlock DockPanel.Dock="Right" HorizontalAlignment="Right" VerticalAlignment="Center"
+                           Style="{StaticResource SubtitleText}">
+                    <Run Text="Showing last 10 of " />
+                    <Run Text="{Binding TotalDevices, Mode=OneWay}" Foreground="{StaticResource HpBlueBrush}" />
+                    <Run Text=" devices" />
+                </TextBlock>
+            </DockPanel>
+
+            <!-- Devices grid (visible when HasDevices is true) -->
+            <Border Visibility="{Binding HasDevices, Converter={StaticResource BoolToVis}}">
+                <Border.Style>
+                    <Style TargetType="Border" BasedOn="{StaticResource AppCard}" />
+                </Border.Style>
+                <StackPanel>
+                    <DataGrid ItemsSource="{Binding RecentDevices}"
+                              SelectedItem="{Binding SelectedRecentDevice}"
+                              AutoGenerateColumns="False" IsReadOnly="True"
+                              Style="{StaticResource ProfessionalDataGrid}"
+                              HeadersVisibility="Column"
+                              CanUserSortColumns="True"
+                              VirtualizingStackPanel.IsVirtualizing="True"
+                              VirtualizingStackPanel.VirtualizationMode="Recycling">
+                        <DataGrid.Columns>
+                            <DataGridTextColumn Header="Hostname" Binding="{Binding Hostname}" Width="*" />
+                            <DataGridTextColumn Header="Model" Binding="{Binding Model}" Width="*" />
+                            <DataGridTemplateColumn Header="Status" Width="100">
+                                <DataGridTemplateColumn.CellTemplate>
+                                    <DataTemplate>
+                                        <TextBlock Text="{Binding Status}"
+                                                   Foreground="{Binding Status, Converter={StaticResource StatusToColor}}"
+                                                   FontWeight="SemiBold" />
+                                    </DataTemplate>
+                                </DataGridTemplateColumn.CellTemplate>
+                            </DataGridTemplateColumn>
+                            <DataGridTextColumn Header="Updates" Binding="{Binding Recommendations.Count}" Width="80" />
+                            <DataGridTextColumn Header="Last Scanned" Binding="{Binding LastScanned, StringFormat='{}{0:MM/dd HH:mm}'}" Width="110" />
+                        </DataGrid.Columns>
+                    </DataGrid>
+                </StackPanel>
+            </Border>
+
+            <!-- Device Detail Panel (visible when a recent device is clicked) -->
+            <Border Visibility="{Binding HasSelectedDevice, Converter={StaticResource BoolToVis}}"
+                    Margin="0,12,0,0">
+                <Border.Style>
+                    <Style TargetType="Border" BasedOn="{StaticResource AppCard}" />
+                </Border.Style>
+                <StackPanel>
+                    <!-- Header -->
+                    <DockPanel Margin="0,0,0,8">
+                        <StackPanel>
+                            <TextBlock FontSize="16" FontWeight="Bold"
+                                       Foreground="{StaticResource TextPrimaryBrush}">
+                                <Run Text="{Binding SelectedRecentDevice.Hostname, Mode=OneWay}" />
+                                <Run Text=" — " Foreground="{StaticResource TextSecondaryBrush}" />
+                                <Run Text="{Binding SelectedRecentDevice.Model, Mode=OneWay}"
+                                     Foreground="{StaticResource TextSecondaryBrush}" />
+                            </TextBlock>
+                            <TextBlock Style="{StaticResource CaptionText}" Margin="0,2,0,0">
+                                <Run Text="{Binding SelectedRecentDevice.IpAddress, Mode=OneWay}" />
+                                <Run Text=" | " />
+                                <Run Text="Serial: " />
+                                <Run Text="{Binding SelectedRecentDevice.SerialNumber, Mode=OneWay}" />
+                                <Run Text=" | " />
+                                <Run Text="Product ID: " />
+                                <Run Text="{Binding SelectedRecentDevice.ProductId, Mode=OneWay}" />
+                                <Run Text=" | " />
+                                <Run Text="{Binding SelectedRecentDevice.OsVersion, Mode=OneWay}" />
+                            </TextBlock>
+                        </StackPanel>
+                        <TextBlock DockPanel.Dock="Right" HorizontalAlignment="Right" VerticalAlignment="Center"
+                                   Foreground="{Binding SelectedRecentDevice.Status, Converter={StaticResource StatusToColor}}"
+                                   FontWeight="SemiBold" FontSize="13"
+                                   Text="{Binding SelectedRecentDevice.Status, Mode=OneWay}" />
+                    </DockPanel>
+
+                    <!-- Updates list -->
+                    <TextBlock Style="{StaticResource SubtitleText}" FontWeight="SemiBold" Margin="0,0,0,6">
+                        <Run Text="Updates (" />
+                        <Run Text="{Binding SelectedDeviceRecommendations.Count, Mode=OneWay}" />
+                        <Run Text=")" />
+                    </TextBlock>
+                    <ItemsControl ItemsSource="{Binding SelectedDeviceRecommendations}" MaxHeight="200">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <Border Background="{StaticResource SubtleBackgroundBrush}" CornerRadius="4"
+                                        Padding="8,5" Margin="0,0,0,3">
+                                    <DockPanel>
+                                        <Border DockPanel.Dock="Right" CornerRadius="3" Padding="6,2"
+                                                Background="{StaticResource TagBackgroundBrush}" Margin="8,0,0,0"
+                                                VerticalAlignment="Center">
+                                            <TextBlock Text="{Binding Severity}" Style="{StaticResource BadgeText}"
+                                                       FontWeight="SemiBold"
+                                                       Foreground="{Binding Severity, Converter={StaticResource StatusToColor}}" />
+                                        </Border>
+                                        <StackPanel>
+                                            <TextBlock Text="{Binding Name}" Style="{StaticResource BodyText}"
+                                                       FontWeight="SemiBold" TextTrimming="CharacterEllipsis" />
+                                            <TextBlock Style="{StaticResource CaptionText}">
+                                                <Run Text="{Binding SoftPaqId, Mode=OneWay}" />
+                                                <Run Text=" | " />
+                                                <Run Text="{Binding Category, Mode=OneWay}" />
+                                            </TextBlock>
+                                        </StackPanel>
+                                    </DockPanel>
+                                </Border>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                </StackPanel>
+            </Border>
+
+            <!-- Empty state (visible when HasDevices is false) -->
+            <Border>
+                <Border.Style>
+                    <Style TargetType="Border" BasedOn="{StaticResource AppCard}">
+                        <Setter Property="Visibility" Value="Collapsed" />
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding HasDevices}" Value="False">
+                                <Setter Property="Visibility" Value="Visible" />
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </Border.Style>
+                <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center" Margin="0,32">
+                    <materialDesign:PackIcon Kind="MonitorOff" Width="48" Height="48"
+                                             Foreground="{StaticResource TextSecondaryBrush}"
+                                             HorizontalAlignment="Center" Opacity="0.4" />
+                    <TextBlock Text="No devices discovered yet" Style="{StaticResource SectionTitle}"
+                               HorizontalAlignment="Center" Margin="0,12,0,4" />
+                    <TextBlock Text="Go to Devices tab to scan your network and add HP devices"
+                               Style="{StaticResource CaptionText}"
+                               HorizontalAlignment="Center" />
+                </StackPanel>
+            </Border>
+        </StackPanel>
+    </ScrollViewer>
+</UserControl>

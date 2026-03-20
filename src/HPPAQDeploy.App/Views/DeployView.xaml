@@ -1,0 +1,685 @@
+<UserControl x:Class="HPPAQDeploy.App.Views.DeployView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:materialDesign="http://materialdesigninxaml.net/winfx/xaml/themes"
+             xmlns:converters="clr-namespace:HPPAQDeploy.App.Converters">
+
+    <UserControl.Resources>
+        <converters:StatusToColorConverter x:Key="StatusToColor" />
+        <converters:BoolToVisibilityConverter x:Key="BoolToVis" />
+        <converters:InverseBoolToVisibilityConverter x:Key="InverseBoolToVis" />
+        <converters:FileSizeConverter x:Key="FileSize" />
+        <converters:CategoryToColorConverter x:Key="CategoryToColor" />
+        <converters:ZeroToVisibilityConverter x:Key="ZeroToVis" />
+        <converters:NonZeroToVisibilityConverter x:Key="NonZeroToVis" />
+    </UserControl.Resources>
+
+    <Grid>
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+            <RowDefinition Height="Auto" />
+        </Grid.RowDefinitions>
+
+        <!-- Row 1: Title + main action buttons -->
+        <DockPanel Grid.Row="0" Margin="0,0,0,8">
+            <!-- Title + subtitle on left -->
+            <StackPanel DockPanel.Dock="Left" VerticalAlignment="Center">
+                <TextBlock Text="Deploy Updates" Style="{StaticResource PageTitle}" />
+                <TextBlock Text="Select a group, scan for updates, then install"
+                           Style="{StaticResource SubtitleText}" Margin="0,2,0,0" />
+            </StackPanel>
+
+            <!-- Action buttons on right -->
+            <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" HorizontalAlignment="Right"
+                        VerticalAlignment="Center">
+                <Button Command="{Binding DeploySelectedCommand}"
+                        ToolTip="Install updates on the selected device only"
+                        Visibility="{Binding IsDeploying, Converter={StaticResource InverseBoolToVis}}"
+                        Style="{StaticResource PrimaryButton}"
+                        Padding="16,6" Height="34" Margin="0,0,6,0">
+                    <StackPanel Orientation="Horizontal">
+                        <materialDesign:PackIcon Kind="Download" Width="16" Height="16"
+                                                 VerticalAlignment="Center" Margin="0,0,6,0" />
+                        <TextBlock Text="Install Selected" VerticalAlignment="Center" />
+                    </StackPanel>
+                </Button>
+                <Button Command="{Binding DeployAllCommand}"
+                        ToolTip="Install all available updates on every device in the group"
+                        Visibility="{Binding IsDeploying, Converter={StaticResource InverseBoolToVis}}"
+                        Style="{StaticResource SuccessButton}"
+                        Padding="16,6" Height="34" Margin="0,0,6,0">
+                    <StackPanel Orientation="Horizontal">
+                        <materialDesign:PackIcon Kind="RocketLaunch" Width="16" Height="16"
+                                                 VerticalAlignment="Center" Margin="0,0,6,0" />
+                        <TextBlock Text="Install All Updates" VerticalAlignment="Center" />
+                    </StackPanel>
+                </Button>
+                <Button Content="Stop"
+                        Command="{Binding CancelDeployCommand}"
+                        ToolTip="Cancel the current deployment"
+                        Visibility="{Binding IsDeploying, Converter={StaticResource BoolToVis}}"
+                        Style="{StaticResource DangerButton}"
+                        Padding="16,6" Height="34" />
+            </StackPanel>
+        </DockPanel>
+
+        <!-- Row 2: Settings bar (credentials + concurrency) -->
+        <Border Grid.Row="1" Background="{StaticResource SubtleBackgroundBrush}" CornerRadius="4" Padding="12,6" Margin="0,0,0,12">
+            <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                <!-- Credential selector -->
+                <TextBlock Text="Credentials:" Style="{StaticResource SubtitleText}" VerticalAlignment="Center"
+                           Margin="0,0,6,0" />
+                <ComboBox x:Name="CredentialComboBox"
+                          ItemsSource="{Binding Credentials}"
+                          SelectedItem="{Binding SelectedCredential, Mode=TwoWay}"
+                          SelectionChanged="CredentialComboBox_SelectionChanged"
+                          ToolTip="Select credentials for remote device access"
+                          Foreground="{StaticResource TextPrimaryBrush}"
+                          MinWidth="160" Height="34" FontSize="12" Margin="0,0,24,0" />
+
+                <!-- Concurrency slider -->
+                <TextBlock Style="{StaticResource SubtitleText}" VerticalAlignment="Center"
+                           Margin="0,0,4,0">
+                    <Run Text="Concurrency:" />
+                    <Run Text="{Binding Concurrency}" FontWeight="Bold" Foreground="{StaticResource TextPrimaryBrush}" />
+                </TextBlock>
+                <Slider Value="{Binding Concurrency}" Minimum="1" Maximum="50"
+                        ToolTip="Number of devices to deploy to simultaneously"
+                        TickFrequency="1" IsSnapToTickEnabled="True"
+                        Width="100" VerticalAlignment="Center"
+                        Foreground="{StaticResource HpBlueBrush}" />
+            </StackPanel>
+        </Border>
+
+        <!-- Row 2: Group selection + scan -->
+        <Border Grid.Row="2" Style="{StaticResource AppCard}" Margin="0,0,0,12" Padding="12,8">
+            <DockPanel>
+                <StackPanel DockPanel.Dock="Left" Orientation="Horizontal" VerticalAlignment="Center">
+                    <materialDesign:PackIcon Kind="AccountGroup" Width="20" Height="20"
+                                             Foreground="{StaticResource HpBlueBrush}"
+                                             VerticalAlignment="Center" Margin="0,0,8,0" />
+                    <TextBlock Text="Group:" Style="{StaticResource SubtitleText}"
+                               VerticalAlignment="Center" Margin="0,0,6,0" />
+                    <ComboBox x:Name="GroupComboBox"
+                              ItemsSource="{Binding AvailableGroups}"
+                              SelectedItem="{Binding SelectedGroup, Mode=TwoWay}"
+                              SelectionChanged="GroupComboBox_SelectionChanged"
+                              ToolTip="Select a device group to scan and deploy"
+                              Foreground="{StaticResource TextPrimaryBrush}"
+                              MinWidth="200" Height="34" FontSize="12" Margin="0,0,16,0" />
+                    <TextBlock Style="{StaticResource CaptionText}" VerticalAlignment="Center"
+                               Foreground="{StaticResource TextSecondaryBrush}">
+                        <Run Text="{Binding GroupDevices.Count, Mode=OneWay}" />
+                        <Run Text=" device(s) in group" />
+                    </TextBlock>
+                </StackPanel>
+                <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" HorizontalAlignment="Right"
+                            VerticalAlignment="Center">
+                    <Button Command="{Binding ScanGroupCommand}"
+                            Visibility="{Binding IsScanning, Converter={StaticResource InverseBoolToVis}}"
+                            Style="{StaticResource PrimaryButton}"
+                            Padding="16,6" Height="34" Margin="0,0,6,0"
+                            ToolTip="Run HPIA analysis on all devices in this group">
+                        <StackPanel Orientation="Horizontal">
+                            <materialDesign:PackIcon Kind="Magnify" Width="16" Height="16"
+                                                     VerticalAlignment="Center" Margin="0,0,6,0" />
+                            <TextBlock Text="Scan Group" VerticalAlignment="Center" />
+                        </StackPanel>
+                    </Button>
+                    <Button Content="Cancel Scan" Command="{Binding CancelScanCommand}"
+                            Visibility="{Binding IsScanning, Converter={StaticResource BoolToVis}}"
+                            Style="{StaticResource DangerButton}"
+                            Padding="16,6" Height="34" />
+                </StackPanel>
+            </DockPanel>
+        </Border>
+
+        <!-- Row 3: Scan progress (visible during scanning) -->
+        <Border Grid.Row="3" Style="{StaticResource AppCard}" Margin="0,0,0,12" Padding="16,12"
+                Visibility="{Binding IsScanning, Converter={StaticResource BoolToVis}}">
+            <StackPanel>
+                <!-- Header row -->
+                <DockPanel Margin="0,0,0,8">
+                    <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                        <ProgressBar Style="{StaticResource MaterialDesignCircularProgressBar}"
+                                     IsIndeterminate="True" Width="18" Height="18"
+                                     Foreground="{StaticResource HpBlueBrush}"
+                                     Margin="0,0,10,0" />
+                        <TextBlock Text="Scanning for Updates" Style="{StaticResource SectionTitle}"
+                                   VerticalAlignment="Center" />
+                    </StackPanel>
+                    <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" HorizontalAlignment="Right"
+                                VerticalAlignment="Center">
+                        <TextBlock Style="{StaticResource SubtitleText}" Margin="0,0,12,0">
+                            <Run Text="{Binding ScannedCount, Mode=OneWay}" FontWeight="Bold" FontSize="16"
+                                 Foreground="{StaticResource HpBlueBrush}" />
+                            <Run Text=" / " />
+                            <Run Text="{Binding TotalToScan, Mode=OneWay}" FontSize="16" />
+                            <Run Text=" devices" />
+                        </TextBlock>
+                        <TextBlock Style="{StaticResource SubtitleText}" FontWeight="Bold"
+                                   Foreground="{StaticResource HpBlueBrush}">
+                            <Run Text="{Binding ScanProgress, Mode=OneWay, StringFormat='{}{0:F0}%'}" />
+                        </TextBlock>
+                    </StackPanel>
+                </DockPanel>
+
+                <!-- Progress bar -->
+                <ProgressBar Value="{Binding ScanProgress, Mode=OneWay}" Maximum="100" Height="8"
+                             Foreground="{StaticResource HpBlueBrush}"
+                             Background="{StaticResource ProgressBarTrackBrush}"
+                             Margin="0,0,0,8" />
+
+                <!-- Status detail -->
+                <TextBlock Text="{Binding ScanStatus}" Style="{StaticResource CaptionText}"
+                           Foreground="{StaticResource TextSecondaryBrush}"
+                           TextTrimming="CharacterEllipsis" />
+
+            </StackPanel>
+        </Border>
+
+        <!-- Scan Log (visible after scan completes) -->
+        <Border Grid.Row="3" Margin="0,0,0,8" Padding="8,4"
+                Visibility="{Binding HasScannedGroup, Converter={StaticResource BoolToVis}}">
+            <Expander IsExpanded="False" Background="Transparent" BorderThickness="0">
+                <Expander.Header>
+                    <DockPanel>
+                        <Button DockPanel.Dock="Right" Command="{Binding ExportScanLogCommand}"
+                                ToolTip="Export scan log to CSV"
+                                Style="{StaticResource SecondaryButton}"
+                                Height="22" Padding="8,1" Margin="8,0,0,0">
+                            <TextBlock Text="Export" FontSize="11" />
+                        </Button>
+                        <StackPanel Orientation="Horizontal">
+                            <materialDesign:PackIcon Kind="TextBoxMultipleOutline" Width="14" Height="14"
+                                                     Foreground="{StaticResource HpBlueBrush}"
+                                                     VerticalAlignment="Center" Margin="0,0,6,0" />
+                            <TextBlock Style="{StaticResource CaptionText}">
+                                <Run Text="Scan Log — " />
+                                <Run Text="{Binding ScanLog.Count, Mode=OneWay}" FontWeight="SemiBold"
+                                     Foreground="{StaticResource HpBlueBrush}" />
+                                <Run Text=" entries" />
+                            </TextBlock>
+                        </StackPanel>
+                    </DockPanel>
+                </Expander.Header>
+                <ItemsControl ItemsSource="{Binding ScanLog}" MaxHeight="160"
+                              VirtualizingStackPanel.IsVirtualizing="True"
+                              FontFamily="Consolas" FontSize="11" Margin="0,4,0,0">
+                    <ItemsControl.Template>
+                        <ControlTemplate TargetType="ItemsControl">
+                            <ScrollViewer VerticalScrollBarVisibility="Auto">
+                                <ItemsPresenter />
+                            </ScrollViewer>
+                        </ControlTemplate>
+                    </ItemsControl.Template>
+                    <ItemsControl.ItemTemplate>
+                        <DataTemplate>
+                            <DockPanel Margin="0,1">
+                                <Ellipse Width="6" Height="6" Margin="0,0,5,0"
+                                         VerticalAlignment="Center" DockPanel.Dock="Left"
+                                         Fill="{Binding Level, Converter={StaticResource StatusToColor}}" />
+                                <TextBlock Text="{Binding Timestamp, StringFormat='{}{0:HH:mm:ss}'}"
+                                           Foreground="{StaticResource TextSecondaryBrush}"
+                                           Width="55" DockPanel.Dock="Left" VerticalAlignment="Center" />
+                                <TextBlock Text="{Binding DeviceName}" FontWeight="SemiBold"
+                                           Foreground="{StaticResource HpBlueBrush}"
+                                           Width="130" DockPanel.Dock="Left" VerticalAlignment="Center"
+                                           TextTrimming="CharacterEllipsis" Margin="4,0" />
+                                <TextBlock Text="{Binding Message}"
+                                           Foreground="{StaticResource TextPrimaryBrush}"
+                                           VerticalAlignment="Center" TextTrimming="CharacterEllipsis" />
+                            </DockPanel>
+                        </DataTemplate>
+                    </ItemsControl.ItemTemplate>
+                </ItemsControl>
+            </Expander>
+        </Border>
+
+        <!-- Status line + stats -->
+        <Border Grid.Row="4" Style="{StaticResource AppCard}" Margin="0,0,0,12" Padding="12,8">
+            <DockPanel>
+                <TextBlock Text="{Binding DeployStatus}" Style="{StaticResource BodyText}"
+                           Foreground="White" VerticalAlignment="Center"
+                           TextWrapping="NoWrap" TextTrimming="CharacterEllipsis" />
+                <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" HorizontalAlignment="Right">
+                    <TextBlock Style="{StaticResource SubtitleText}" Margin="16,0,0,0">
+                        <Run Text="Devices:" />
+                        <Run Text="{Binding Devices.Count, Mode=OneWay}" FontWeight="Bold" Foreground="{StaticResource TextPrimaryBrush}" />
+                    </TextBlock>
+                    <TextBlock Style="{StaticResource SubtitleText}" Margin="12,0,0,0">
+                        <Run Text="Updates:" />
+                        <Run Text="{Binding TotalPendingUpdates}" FontWeight="Bold" Foreground="{StaticResource HpBlueBrush}" />
+                    </TextBlock>
+                    <TextBlock Style="{StaticResource SubtitleText}" Margin="12,0,0,0">
+                        <Run Text="Progress:" />
+                        <Run Text="{Binding DeployedCount}" FontWeight="Bold" />/<Run Text="{Binding TotalToDeploy}" />
+                    </TextBlock>
+                    <TextBlock Style="{StaticResource SubtitleText}" Margin="12,0,0,0">
+                        <Run Text="Success:" Foreground="{StaticResource TextSecondaryBrush}" />
+                        <Run Text="{Binding SuccessCount}" FontWeight="Bold" Foreground="{StaticResource AccentGreenBrush}" />
+                    </TextBlock>
+                    <TextBlock Style="{StaticResource SubtitleText}" Margin="12,0,0,0">
+                        <Run Text="Failed:" Foreground="{StaticResource TextSecondaryBrush}" />
+                        <Run Text="{Binding FailCount}" FontWeight="Bold" Foreground="{StaticResource AccentRedBrush}" />
+                    </TextBlock>
+                </StackPanel>
+            </DockPanel>
+        </Border>
+
+        <!-- Row 5: Reboot management card (visible when devices need reboot) -->
+        <Border Grid.Row="5" Style="{StaticResource AppCard}" Margin="0,0,0,12" Padding="12,8"
+                Visibility="{Binding RebootPendingCount, Converter={StaticResource NonZeroToVis}}">
+            <DockPanel>
+                <StackPanel DockPanel.Dock="Left" Orientation="Horizontal" VerticalAlignment="Center">
+                    <materialDesign:PackIcon Kind="RestartAlert" Width="20" Height="20"
+                                             Foreground="#FFA726" VerticalAlignment="Center" Margin="0,0,8,0" />
+                    <TextBlock Style="{StaticResource BodyText}" VerticalAlignment="Center">
+                        <Run Text="{Binding RebootPendingCount, Mode=OneWay}" FontWeight="Bold" Foreground="#FFA726" />
+                        <Run Text=" device(s) need a reboot to complete updates" />
+                    </TextBlock>
+                </StackPanel>
+                <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" HorizontalAlignment="Right"
+                            VerticalAlignment="Center">
+                    <Button Content="Cancel Reboot"
+                            Command="{Binding CancelRebootCommand}"
+                            ToolTip="Cancel pending reboot on the selected device (shutdown /a)"
+                            Style="{StaticResource SecondaryButton}"
+                            Padding="12,4" Height="30" Margin="0,0,6,0" />
+                    <Button Content="Reboot Selected"
+                            Command="{Binding RebootDeviceCommand}"
+                            ToolTip="Reboot the selected device with a 60-second delay"
+                            Style="{StaticResource DangerButton}"
+                            Padding="12,4" Height="30" Margin="0,0,6,0" />
+                    <Button Content="Reboot All Pending"
+                            Command="{Binding RebootAllPendingCommand}"
+                            ToolTip="Reboot all devices that need a restart"
+                            Style="{StaticResource DangerButton}"
+                            Padding="12,4" Height="30" />
+                </StackPanel>
+            </DockPanel>
+        </Border>
+
+        <!-- Main two-panel area -->
+        <Grid Grid.Row="6">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="2*" MinWidth="250" MaxWidth="400" />
+                <ColumnDefinition Width="8" />
+                <ColumnDefinition Width="3*" />
+            </Grid.ColumnDefinitions>
+
+            <!-- Left panel: Device list -->
+            <Border Grid.Column="0" Style="{StaticResource AppCard}">
+                <DockPanel>
+                    <!-- Device list header -->
+                    <DockPanel DockPanel.Dock="Top" Margin="0,0,0,12">
+                        <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                            <materialDesign:PackIcon Kind="MonitorMultiple" Width="20" Height="20"
+                                                     Foreground="{StaticResource HpBlueBrush}"
+                                                     VerticalAlignment="Center" Margin="0,0,8,0" />
+                            <TextBlock Style="{StaticResource SectionTitle}" VerticalAlignment="Center">
+                                <Run Text="Devices (" /><Run Text="{Binding FilteredDevices.Count, Mode=OneWay}" /><Run Text=")" />
+                            </TextBlock>
+                        </StackPanel>
+                    </DockPanel>
+
+                    <!-- Device search filter -->
+                    <Border DockPanel.Dock="Top" Style="{StaticResource FilterBarBorder}">
+                        <DockPanel>
+                            <materialDesign:PackIcon Kind="Magnify" Width="16" Height="16"
+                                                     Foreground="{StaticResource TextSecondaryBrush}"
+                                                     VerticalAlignment="Center" Margin="4,0,8,0" DockPanel.Dock="Left" />
+                            <TextBox Text="{Binding DeviceFilterText, UpdateSourceTrigger=PropertyChanged, Delay=200}"
+                                     materialDesign:HintAssist.Hint="Filter devices..."
+                                     Style="{StaticResource FilterBarTextBox}" />
+                        </DockPanel>
+                    </Border>
+
+                    <!-- Hint text -->
+                    <TextBlock DockPanel.Dock="Top" Margin="0,0,0,4"
+                               Style="{StaticResource CaptionText}" Foreground="{StaticResource TextSecondaryBrush}">
+                        Click a device to view its updates. Use "Install on Selected" or "Install All Updates" above.
+                    </TextBlock>
+
+                    <!-- Device ListView -->
+                    <ListView ItemsSource="{Binding FilteredDevices}"
+                              SelectedItem="{Binding SelectedDevice}"
+                              Background="Transparent" BorderThickness="0"
+                              VirtualizingStackPanel.IsVirtualizing="True"
+                              ScrollViewer.HorizontalScrollBarVisibility="Disabled">
+                        <ListView.ContextMenu>
+                            <ContextMenu>
+                                <MenuItem Header="Copy Hostname" Command="{Binding CopyHostnameCommand}" />
+                                <MenuItem Header="Copy IP Address" Command="{Binding CopyIpAddressCommand}" />
+                            </ContextMenu>
+                        </ListView.ContextMenu>
+                        <ListView.ItemContainerStyle>
+                            <Style TargetType="ListViewItem" BasedOn="{StaticResource MaterialDesignListBoxItem}">
+                                <Setter Property="Padding" Value="4,4" />
+                                <Setter Property="Margin" Value="0,1" />
+                                <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+                            </Style>
+                        </ListView.ItemContainerStyle>
+                        <ListView.ItemTemplate>
+                            <DataTemplate>
+                                <Border CornerRadius="4" Padding="10,8">
+                                    <Border.Style>
+                                        <Style TargetType="Border">
+                                            <Setter Property="Background" Value="{StaticResource SubtleHighlightBrush}" />
+                                            <Style.Triggers>
+                                                <DataTrigger Binding="{Binding NeedsReboot}" Value="True">
+                                                    <Setter Property="BorderBrush" Value="#FFA726" />
+                                                    <Setter Property="BorderThickness" Value="2,0,0,0" />
+                                                </DataTrigger>
+                                            </Style.Triggers>
+                                        </Style>
+                                    </Border.Style>
+                                    <Grid>
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="*" />
+                                            <ColumnDefinition Width="Auto" />
+                                            <ColumnDefinition Width="Auto" />
+                                        </Grid.ColumnDefinitions>
+
+                                        <!-- Device info -->
+                                        <StackPanel Grid.Column="0" VerticalAlignment="Center">
+                                            <TextBlock Text="{Binding Hostname}" Style="{StaticResource BodyText}" FontWeight="SemiBold" />
+                                            <TextBlock Style="{StaticResource CaptionText}" Margin="0,2,0,0">
+                                                <Run Text="{Binding Model, Mode=OneWay}" />
+                                                <Run Text=" — " />
+                                                <Run Text="{Binding Recommendations.Count, Mode=OneWay}" FontWeight="Bold"
+                                                     Foreground="{StaticResource HpBlueBrush}" />
+                                                <Run Text=" updates" />
+                                            </TextBlock>
+                                        </StackPanel>
+
+                                        <!-- Reboot indicator icon -->
+                                        <materialDesign:PackIcon Grid.Column="1" Kind="RestartAlert"
+                                                                 Width="18" Height="18" Foreground="#FFA726"
+                                                                 VerticalAlignment="Center" Margin="4,0,6,0"
+                                                                 ToolTip="Reboot required to complete updates"
+                                                                 Visibility="{Binding NeedsReboot, Converter={StaticResource BoolToVis}}" />
+
+                                        <!-- Status badge -->
+                                        <Border Grid.Column="2" CornerRadius="3" Padding="6,2"
+                                                VerticalAlignment="Center"
+                                                Background="{StaticResource DividerBrush}">
+                                            <TextBlock Text="{Binding Status}" Style="{StaticResource CaptionText}" FontWeight="SemiBold"
+                                                       Foreground="{Binding Status, Converter={StaticResource StatusToColor}}" />
+                                        </Border>
+                                    </Grid>
+                                </Border>
+                            </DataTemplate>
+                        </ListView.ItemTemplate>
+                    </ListView>
+                </DockPanel>
+            </Border>
+
+            <!-- Right panel: Selected device's updates -->
+            <Border Grid.Column="2" Style="{StaticResource AppCard}">
+                <Grid>
+                    <!-- No device selected placeholder -->
+                    <Grid Visibility="{Binding HasSelectedDevice, Converter={StaticResource InverseBoolToVis}}">
+                        <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center">
+                            <materialDesign:PackIcon Kind="PackageVariantClosed" Width="48" Height="48"
+                                                     HorizontalAlignment="Center"
+                                                     Foreground="{StaticResource TextSecondaryBrush}" Opacity="0.4" />
+                            <TextBlock Text="Select a device to view its updates"
+                                       Style="{StaticResource BodyText}"
+                                       HorizontalAlignment="Center" Margin="0,12,0,4"
+                                       Foreground="{StaticResource TextSecondaryBrush}" />
+                            <TextBlock Text="Click a device on the left to preview its updates. Use the checkboxes to pick specific updates, or leave all selected to install everything."
+                                       Style="{StaticResource CaptionText}"
+                                       HorizontalAlignment="Center" TextWrapping="Wrap" TextAlignment="Center"
+                                       Foreground="{StaticResource TextSecondaryBrush}" MaxWidth="300" />
+                        </StackPanel>
+                    </Grid>
+
+                    <!-- Device updates content -->
+                    <Grid Visibility="{Binding HasSelectedDevice, Converter={StaticResource BoolToVis}}">
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="*" />
+                        </Grid.RowDefinitions>
+
+                        <!-- Header with check/uncheck buttons -->
+                        <DockPanel Grid.Row="0" Margin="0,0,0,8">
+                            <StackPanel VerticalAlignment="Center">
+                                <StackPanel Orientation="Horizontal">
+                                    <materialDesign:PackIcon Kind="Update" Width="20" Height="20"
+                                                             Foreground="{StaticResource AccentOrangeBrush}"
+                                                             VerticalAlignment="Center" Margin="0,0,8,0" />
+                                    <TextBlock Style="{StaticResource SectionTitle}" VerticalAlignment="Center">
+                                        <Run Text="Updates for " />
+                                        <Run Text="{Binding SelectedDevice.Hostname, Mode=OneWay, FallbackValue=''}" FontWeight="Bold" />
+                                        <Run Text=" (" /><Run Text="{Binding SelectedDeviceRecommendations.Count, Mode=OneWay}" /><Run Text=")" />
+                                    </TextBlock>
+                                </StackPanel>
+                                <TextBlock Style="{StaticResource CaptionText}" Margin="0,2,0,0">
+                                    <Run Text="{Binding SelectedDevice.Model, Mode=OneWay, FallbackValue=''}" />
+                                    <Run Text=" | " />
+                                    <Run Text="{Binding SelectedDevice.IpAddress, Mode=OneWay, FallbackValue=''}" />
+                                </TextBlock>
+                            </StackPanel>
+                            <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" HorizontalAlignment="Right"
+                                        VerticalAlignment="Top"
+                                        Visibility="{Binding SelectedDeviceRecommendations.Count, Converter={StaticResource NonZeroToVis}}">
+                                <Button Content="Select All" Command="{Binding SelectAllDeviceUpdatesCommand}"
+                                        ToolTip="Include all updates for installation"
+                                        Style="{StaticResource SecondaryButton}"
+                                        Height="24" FontSize="12" Padding="8,1" Margin="0,0,4,0" />
+                                <Button Content="Deselect All" Command="{Binding DeselectAllDeviceUpdatesCommand}"
+                                        ToolTip="Exclude all updates from installation"
+                                        Style="{StaticResource SecondaryButton}"
+                                        Height="24" FontSize="12" Padding="8,1" />
+                            </StackPanel>
+                        </DockPanel>
+
+                        <!-- Empty state: no updates available -->
+                        <StackPanel Grid.Row="1" HorizontalAlignment="Center" VerticalAlignment="Center"
+                                    Visibility="{Binding SelectedDeviceRecommendations.Count, Converter={StaticResource ZeroToVis}}">
+                            <materialDesign:PackIcon Kind="PackageVariantClosed" Width="40" Height="40"
+                                                     HorizontalAlignment="Center"
+                                                     Foreground="{StaticResource TextSecondaryBrush}" Opacity="0.5" />
+                            <TextBlock Text="No updates available for this device" Style="{StaticResource BodyText}"
+                                       HorizontalAlignment="Center" Margin="0,10,0,0"
+                                       Foreground="{StaticResource TextSecondaryBrush}" />
+                        </StackPanel>
+
+                        <!-- Updates list -->
+                        <ListView Grid.Row="1" ItemsSource="{Binding SelectedDeviceRecommendations}"
+                                  Visibility="{Binding SelectedDeviceRecommendations.Count, Converter={StaticResource NonZeroToVis}}"
+                                  Background="Transparent" BorderThickness="0"
+                                  VirtualizingStackPanel.IsVirtualizing="True"
+                                  VirtualizingStackPanel.VirtualizationMode="Recycling"
+                                  ScrollViewer.HorizontalScrollBarVisibility="Disabled">
+                            <ListView.ContextMenu>
+                                <ContextMenu>
+                                    <MenuItem Header="Copy SoftPaq ID"
+                                              Command="{Binding CopySoftPaqCommand}"
+                                              CommandParameter="{Binding SelectedDeviceRecommendations/SoftPaqId}" />
+                                    <MenuItem Header="Copy Update Name"
+                                              Command="{Binding CopyUpdateNameCommand}"
+                                              CommandParameter="{Binding SelectedDeviceRecommendations/Name}" />
+                                    <Separator />
+                                    <MenuItem Header="Select All" Command="{Binding SelectAllDeviceUpdatesCommand}" />
+                                    <MenuItem Header="Deselect All" Command="{Binding DeselectAllDeviceUpdatesCommand}" />
+                                </ContextMenu>
+                            </ListView.ContextMenu>
+                            <ListView.ItemContainerStyle>
+                                <Style TargetType="ListViewItem" BasedOn="{StaticResource MaterialDesignListBoxItem}">
+                                    <Setter Property="Padding" Value="6,4" />
+                                    <Setter Property="Margin" Value="0,1" />
+                                    <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+                                </Style>
+                            </ListView.ItemContainerStyle>
+                            <ListView.ItemTemplate>
+                                <DataTemplate>
+                                    <Border Background="{StaticResource SubtleBackgroundBrush}" CornerRadius="3" Padding="8,6">
+                                        <Grid>
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="Auto" />
+                                                <ColumnDefinition Width="*" />
+                                                <ColumnDefinition Width="Auto" />
+                                                <ColumnDefinition Width="Auto" />
+                                                <ColumnDefinition Width="Auto" />
+                                            </Grid.ColumnDefinitions>
+
+                                            <!-- Checkbox -->
+                                            <CheckBox Grid.Column="0"
+                                                      IsChecked="{Binding Selected}"
+                                                      Foreground="{StaticResource HpBlueBrush}"
+                                                      ToolTip="Check to select this update for deployment"
+                                                      VerticalAlignment="Center" Margin="0,0,8,0" />
+
+                                            <!-- Update name + SoftPaq -->
+                                            <StackPanel Grid.Column="1" VerticalAlignment="Center" Margin="0,0,8,0">
+                                                <TextBlock Text="{Binding Name}"
+                                                           Foreground="{StaticResource TextPrimaryBrush}"
+                                                           TextTrimming="CharacterEllipsis"
+                                                           ToolTip="{Binding Name}">
+                                                    <TextBlock.Style>
+                                                        <Style TargetType="TextBlock" BasedOn="{StaticResource SubtitleText}">
+                                                            <Style.Triggers>
+                                                                <DataTrigger Binding="{Binding Selected}" Value="True">
+                                                                    <Setter Property="FontWeight" Value="Bold" />
+                                                                </DataTrigger>
+                                                            </Style.Triggers>
+                                                        </Style>
+                                                    </TextBlock.Style>
+                                                </TextBlock>
+                                                <StackPanel Orientation="Horizontal" Margin="0,2,0,0">
+                                                    <TextBlock Text="{Binding SoftPaqId}" Style="{StaticResource BadgeText}"
+                                                               Foreground="{StaticResource TextSecondaryBrush}"
+                                                               ToolTip="{Binding SoftPaqId}"
+                                                               Margin="0,0,8,0" />
+                                                    <TextBlock Text="{Binding Version}" Style="{StaticResource BadgeText}"
+                                                               Foreground="{StaticResource TextSecondaryBrush}"
+                                                               ToolTip="{Binding Version}"
+                                                               Margin="0,0,8,0" />
+                                                    <TextBlock Text="{Binding SizeBytes, Converter={StaticResource FileSize}}"
+                                                               Style="{StaticResource BadgeText}"
+                                                               Foreground="{StaticResource TextSecondaryBrush}"
+                                                               Margin="0,0,8,0"
+                                                               Visibility="{Binding SizeBytes, Converter={StaticResource NonZeroToVis}}" />
+                                                    <!-- Manual install warning -->
+                                                    <StackPanel Orientation="Horizontal"
+                                                                Visibility="{Binding SilentInstallable, Converter={StaticResource InverseBoolToVis}}">
+                                                        <materialDesign:PackIcon Kind="AlertCircleOutline" Width="13" Height="13"
+                                                                                 Foreground="{StaticResource AccentAmberBrush}"
+                                                                                 VerticalAlignment="Center" Margin="0,0,3,0" />
+                                                        <TextBlock Text="Manual install only" Style="{StaticResource BadgeText}"
+                                                                   Foreground="{StaticResource AccentAmberBrush}"
+                                                                   ToolTip="This update cannot be deployed remotely. It may require user interaction, a connected accessory (e.g. dock), or manual installation on the device." />
+                                                    </StackPanel>
+                                                </StackPanel>
+                                            </StackPanel>
+
+                                            <!-- Category badge -->
+                                            <Border Grid.Column="2" CornerRadius="3" Padding="6,2"
+                                                    Background="{StaticResource TagBackgroundBrush}" Margin="4,0"
+                                                    VerticalAlignment="Center">
+                                                <TextBlock Text="{Binding Category}" Style="{StaticResource BadgeText}"
+                                                           FontWeight="SemiBold"
+                                                           ToolTip="{Binding Category}"
+                                                           Foreground="{Binding Category, Converter={StaticResource CategoryToColor}}" />
+                                            </Border>
+
+                                            <!-- Severity badge -->
+                                            <Border Grid.Column="3" CornerRadius="3" Padding="6,2"
+                                                    Background="{StaticResource TagBackgroundBrush}" Margin="4,0"
+                                                    VerticalAlignment="Center">
+                                                <TextBlock Text="{Binding Severity}" Style="{StaticResource BadgeText}" FontWeight="SemiBold"
+                                                           Foreground="{Binding Severity, Converter={StaticResource StatusToColor}}" />
+                                            </Border>
+                                        </Grid>
+                                    </Border>
+                                </DataTemplate>
+                            </ListView.ItemTemplate>
+                        </ListView>
+                    </Grid>
+                </Grid>
+            </Border>
+        </Grid>
+
+        <!-- Bottom section: Log launcher + summary -->
+        <Border Grid.Row="7" Style="{StaticResource AppCard}" Margin="0,12,0,0" Padding="12,8">
+            <DockPanel>
+                <!-- Progress bar + spinner (visible during deployment) -->
+                <DockPanel DockPanel.Dock="Top" Margin="0,0,0,8"
+                           Visibility="{Binding IsDeploying, Converter={StaticResource BoolToVis}}">
+                    <StackPanel DockPanel.Dock="Left" Orientation="Horizontal" VerticalAlignment="Center" Margin="0,0,10,0">
+                        <ProgressBar Style="{StaticResource MaterialDesignCircularProgressBar}"
+                                     IsIndeterminate="True" Width="16" Height="16"
+                                     Foreground="{StaticResource AccentGreenBrush}"
+                                     Margin="0,0,8,0" />
+                        <TextBlock Text="Deploying..." Style="{StaticResource CaptionText}"
+                                   Foreground="{StaticResource AccentGreenBrush}" FontWeight="SemiBold"
+                                   VerticalAlignment="Center" />
+                    </StackPanel>
+                    <ProgressBar Value="{Binding ProgressPercent}" Maximum="100" Height="6"
+                                 Foreground="{StaticResource AccentGreenBrush}" Background="{StaticResource ProgressBarTrackBrush}"
+                                 VerticalAlignment="Center" />
+                </DockPanel>
+
+                <!-- Actions bar -->
+                <DockPanel>
+                    <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" HorizontalAlignment="Right"
+                                VerticalAlignment="Center">
+                        <Button Command="{Binding CleanupRemoteFilesCommand}"
+                                ToolTip="Remove HPIA temp files from remote devices"
+                                Style="{StaticResource SecondaryButton}"
+                                Height="26" FontSize="12" Padding="8,2" Margin="0,0,4,0">
+                            <StackPanel Orientation="Horizontal">
+                                <materialDesign:PackIcon Kind="Broom" Width="14" Height="14"
+                                                         VerticalAlignment="Center" Margin="0,0,4,0" />
+                                <TextBlock Text="Cleanup" VerticalAlignment="Center" />
+                            </StackPanel>
+                        </Button>
+                        <Button Content="Refresh" Command="{Binding LoadCommand}"
+                                ToolTip="Reload devices from the database"
+                                Style="{StaticResource SecondaryButton}"
+                                Height="26" FontSize="12" Padding="8,2" Margin="0,0,4,0" />
+                        <Button Command="{Binding ExportResultsCommand}"
+                                ToolTip="Export the deployment log to a CSV file"
+                                Style="{StaticResource SecondaryButton}"
+                                Height="26" FontSize="12" Padding="8,2">
+                            <StackPanel Orientation="Horizontal">
+                                <materialDesign:PackIcon Kind="FileExport" Width="14" Height="14"
+                                                         VerticalAlignment="Center" Margin="0,0,4,0" />
+                                <TextBlock Text="Export Log" VerticalAlignment="Center" />
+                            </StackPanel>
+                        </Button>
+                    </StackPanel>
+
+                    <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                        <Button Command="{Binding OpenDeploymentLogCommand}"
+                                ToolTip="Open the deployment log in a separate window"
+                                Style="{StaticResource SecondaryButton}"
+                                Height="30" Padding="12,4">
+                            <StackPanel Orientation="Horizontal">
+                                <materialDesign:PackIcon Kind="TextBoxMultipleOutline" Width="16" Height="16"
+                                                         VerticalAlignment="Center" Margin="0,0,6,0" />
+                                <TextBlock Text="Open Deployment Log" VerticalAlignment="Center" />
+                            </StackPanel>
+                        </Button>
+
+                        <!-- Log entry count -->
+                        <TextBlock Style="{StaticResource SubtitleText}"
+                                   VerticalAlignment="Center" Margin="16,0,0,0">
+                            <Run Text="{Binding DeploymentLog.Count, Mode=OneWay}"
+                                 FontWeight="SemiBold" Foreground="{StaticResource HpBlueBrush}" />
+                            <Run Text=" log entries" />
+                        </TextBlock>
+                    </StackPanel>
+                </DockPanel>
+            </DockPanel>
+        </Border>
+    </Grid>
+</UserControl>

@@ -1,0 +1,251 @@
+<Window x:Class="HPPAQDeploy.App.Views.DeploymentLogWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:materialDesign="http://materialdesigninxaml.net/winfx/xaml/themes"
+        xmlns:converters="clr-namespace:HPPAQDeploy.App.Converters"
+        Title="HPPAQDeploy - Deployment Log"
+        Width="950" Height="580"
+        MinWidth="600" MinHeight="350"
+        WindowStartupLocation="CenterOwner"
+        Topmost="{Binding AlwaysOnTop, Mode=TwoWay}"
+        Background="{StaticResource ContentBgBrush}"
+        TextElement.Foreground="{StaticResource TextPrimaryBrush}"
+        TextElement.FontWeight="Regular"
+        TextElement.FontSize="13"
+        FontFamily="{materialDesign:MaterialDesignFont}">
+
+    <Window.Resources>
+        <converters:StatusToColorConverter x:Key="StatusToColor" />
+        <converters:BoolToVisibilityConverter x:Key="BoolToVis" />
+        <converters:ZeroToVisibilityConverter x:Key="ZeroToVis" />
+        <converters:NonZeroToVisibilityConverter x:Key="NonZeroToVis" />
+        <converters:BoolToTextWrappingConverter x:Key="BoolToTextWrapping" />
+    </Window.Resources>
+
+    <Grid Margin="16">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+            <RowDefinition Height="Auto" />
+        </Grid.RowDefinitions>
+
+        <!-- Row 0: Toolbar -->
+        <DockPanel Grid.Row="0" Margin="0,0,0,8">
+            <StackPanel DockPanel.Dock="Left" Orientation="Horizontal" VerticalAlignment="Center">
+                <materialDesign:PackIcon Kind="TextBoxMultipleOutline" Width="20" Height="20"
+                                         Foreground="{StaticResource HpBlueBrush}"
+                                         VerticalAlignment="Center" Margin="0,0,8,0" />
+                <TextBlock Text="Deployment Log" Style="{StaticResource SectionTitle}"
+                           VerticalAlignment="Center" />
+            </StackPanel>
+
+            <StackPanel DockPanel.Dock="Right" Orientation="Horizontal"
+                        HorizontalAlignment="Right" VerticalAlignment="Center">
+                <!-- Auto-scroll toggle -->
+                <ToggleButton IsChecked="{Binding AutoScroll}"
+                              ToolTip="Auto-scroll to newest entries"
+                              Style="{StaticResource MaterialDesignFlatPrimaryToggleButton}"
+                              Height="28" Width="28" Padding="0" Margin="0,0,4,0">
+                    <materialDesign:PackIcon Kind="ArrowDownBold" Width="16" Height="16" />
+                </ToggleButton>
+
+                <!-- Word Wrap toggle -->
+                <ToggleButton IsChecked="{Binding WordWrap}"
+                              ToolTip="Toggle word wrap"
+                              Style="{StaticResource MaterialDesignFlatPrimaryToggleButton}"
+                              Height="28" Width="28" Padding="0" Margin="0,0,4,0">
+                    <materialDesign:PackIcon Kind="Wrap" Width="16" Height="16" />
+                </ToggleButton>
+
+                <!-- Always on Top toggle -->
+                <ToggleButton IsChecked="{Binding AlwaysOnTop}"
+                              ToolTip="Keep window on top"
+                              Style="{StaticResource MaterialDesignFlatPrimaryToggleButton}"
+                              Height="28" Width="28" Padding="0" Margin="0,0,8,0">
+                    <materialDesign:PackIcon Kind="Pin" Width="16" Height="16" />
+                </ToggleButton>
+
+                <!-- Separator -->
+                <Border Width="1" Height="20" Background="{StaticResource DividerBrush}"
+                        Margin="0,0,8,0" VerticalAlignment="Center" />
+
+                <!-- Font size buttons -->
+                <TextBlock Text="Font:" Style="{StaticResource SubtitleText}"
+                           VerticalAlignment="Center" Margin="0,0,4,0" />
+                <Button Content="S" Command="{Binding SetFontSmallCommand}"
+                        ToolTip="Small font (10px)"
+                        Style="{StaticResource SecondaryButton}"
+                        Height="24" Width="24" FontSize="12" Padding="0" MinWidth="0" Margin="0,0,2,0" />
+                <Button Content="M" Command="{Binding SetFontMediumCommand}"
+                        ToolTip="Medium font (12px)"
+                        Style="{StaticResource SecondaryButton}"
+                        Height="24" Width="24" FontSize="12" Padding="0" MinWidth="0" Margin="0,0,2,0" />
+                <Button Content="L" Command="{Binding SetFontLargeCommand}"
+                        ToolTip="Large font (14px)"
+                        Style="{StaticResource SecondaryButton}"
+                        Height="24" Width="24" FontSize="12" Padding="0" MinWidth="0" Margin="0,0,8,0" />
+
+                <!-- Separator -->
+                <Border Width="1" Height="20" Background="{StaticResource DividerBrush}"
+                        Margin="0,0,8,0" VerticalAlignment="Center" />
+
+                <!-- Clear -->
+                <Button Content="Clear" Command="{Binding ClearLogCommand}"
+                        ToolTip="Clear all log entries"
+                        Style="{StaticResource DangerButton}"
+                        Height="26" FontSize="12" Padding="10,2" MinWidth="0" Margin="0,0,4,0" />
+
+                <!-- Export -->
+                <Button Command="{Binding ExportResultsCommand}"
+                        ToolTip="Export deployment log to CSV file"
+                        Style="{StaticResource SecondaryButton}"
+                        Height="26" FontSize="12" Padding="10,2" MinWidth="0">
+                    <StackPanel Orientation="Horizontal">
+                        <materialDesign:PackIcon Kind="FileExport" Width="14" Height="14"
+                                                 VerticalAlignment="Center" Margin="0,0,4,0" />
+                        <TextBlock Text="Export CSV" VerticalAlignment="Center" />
+                    </StackPanel>
+                </Button>
+            </StackPanel>
+        </DockPanel>
+
+        <!-- Row 1: Filter bar + progress -->
+        <StackPanel Grid.Row="1" Margin="0,0,0,8">
+            <!-- Progress bar (visible during deployment) -->
+            <ProgressBar Value="{Binding ProgressPercent, Mode=OneWay}" Maximum="100" Height="4"
+                         Foreground="{StaticResource AccentGreenBrush}"
+                         Background="{StaticResource ProgressBarTrackBrush}"
+                         Visibility="{Binding IsDeploying, Converter={StaticResource BoolToVis}}"
+                         Margin="0,0,0,6" />
+
+            <Border Background="{StaticResource SubtleBackgroundBrush}"
+                    CornerRadius="4" Padding="8,4">
+                <DockPanel VerticalAlignment="Center">
+                    <!-- Status text on right -->
+                    <TextBlock DockPanel.Dock="Right" Text="{Binding DeployStatus}"
+                               Style="{StaticResource CaptionText}"
+                               Foreground="{StaticResource TextSecondaryBrush}"
+                               VerticalAlignment="Center" Margin="12,0,0,0"
+                               TextTrimming="CharacterEllipsis" MaxWidth="300" />
+
+                    <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                        <materialDesign:PackIcon Kind="Magnify" Width="16" Height="16"
+                                                 Foreground="{StaticResource TextSecondaryBrush}"
+                                                 VerticalAlignment="Center" Margin="0,0,6,0" />
+                        <TextBox Text="{Binding LogFilterText, UpdateSourceTrigger=PropertyChanged, Delay=300}"
+                                 materialDesign:HintAssist.Hint="Filter by device or message..."
+                                 Style="{StaticResource MaterialDesignOutlinedTextBox}"
+                                 Foreground="{StaticResource TextPrimaryBrush}"
+                                 MinWidth="280" Height="28" FontSize="12"
+                                 Padding="6,4" Margin="0,0,12,0"
+                                 VerticalContentAlignment="Center" />
+                        <TextBlock Text="Level:" Style="{StaticResource SubtitleText}"
+                                   VerticalAlignment="Center" Margin="0,0,6,0" />
+                        <ComboBox ItemsSource="{Binding LogLevelOptions}"
+                                  SelectedItem="{Binding LogLevelFilter}"
+                                  Style="{StaticResource MaterialDesignOutlinedComboBox}"
+                                  MinWidth="90" Height="28" FontSize="12" />
+                    </StackPanel>
+                </DockPanel>
+            </Border>
+        </StackPanel>
+
+        <!-- Row 2: Log content -->
+        <Border Grid.Row="2" Style="{StaticResource AppCard}" Padding="8">
+            <Grid>
+                <!-- Empty state -->
+                <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center"
+                            Visibility="{Binding FilteredDeploymentLog.Count,
+                                         Converter={StaticResource ZeroToVis}}">
+                    <materialDesign:PackIcon Kind="TextBoxMultipleOutline" Width="48" Height="48"
+                                             HorizontalAlignment="Center"
+                                             Foreground="{StaticResource TextSecondaryBrush}" Opacity="0.4" />
+                    <TextBlock Text="No deployment activity yet"
+                               Style="{StaticResource SubtitleText}"
+                               HorizontalAlignment="Center" Margin="0,10,0,0"
+                               Foreground="{StaticResource TextSecondaryBrush}" />
+                </StackPanel>
+
+                <!-- Log entries -->
+                <ItemsControl x:Name="LogItemsControl"
+                              ItemsSource="{Binding FilteredDeploymentLog}"
+                              Visibility="{Binding FilteredDeploymentLog.Count,
+                                           Converter={StaticResource NonZeroToVis}}"
+                              VirtualizingStackPanel.IsVirtualizing="True"
+                              VirtualizingStackPanel.VirtualizationMode="Recycling"
+                              ScrollViewer.CanContentScroll="True"
+                              FontFamily="Consolas"
+                              FontSize="{Binding LogFontSize}">
+                    <ItemsControl.Template>
+                        <ControlTemplate TargetType="ItemsControl">
+                            <ScrollViewer x:Name="LogScrollViewer"
+                                          VerticalScrollBarVisibility="Auto"
+                                          HorizontalScrollBarVisibility="Auto">
+                                <ItemsPresenter />
+                            </ScrollViewer>
+                        </ControlTemplate>
+                    </ItemsControl.Template>
+                    <ItemsControl.ItemsPanel>
+                        <ItemsPanelTemplate>
+                            <VirtualizingStackPanel />
+                        </ItemsPanelTemplate>
+                    </ItemsControl.ItemsPanel>
+                    <ItemsControl.ItemTemplate>
+                        <DataTemplate>
+                            <Border Padding="2,4" Margin="0,1"
+                                    Background="{StaticResource SubtleBackgroundBrush}"
+                                    CornerRadius="3">
+                                <DockPanel>
+                                    <!-- Severity color dot -->
+                                    <Ellipse Width="8" Height="8" Margin="4,0,8,0"
+                                             VerticalAlignment="Center" DockPanel.Dock="Left"
+                                             Fill="{Binding Level, Converter={StaticResource StatusToColor}}" />
+                                    <!-- Timestamp -->
+                                    <TextBlock Text="{Binding Timestamp, StringFormat='{}{0:HH:mm:ss}'}"
+                                               Foreground="White" Opacity="0.6"
+                                               Width="65" DockPanel.Dock="Left" VerticalAlignment="Center" />
+                                    <!-- Device name -->
+                                    <TextBlock Text="{Binding DeviceName}" FontWeight="Bold"
+                                               Foreground="{StaticResource HpBlueBrush}"
+                                               Width="160" DockPanel.Dock="Left" VerticalAlignment="Center"
+                                               TextTrimming="CharacterEllipsis" Margin="4,0"
+                                               ToolTip="{Binding DeviceName}" />
+                                    <!-- Message -->
+                                    <TextBlock Text="{Binding Message}"
+                                               Foreground="White"
+                                               VerticalAlignment="Center"
+                                               TextWrapping="{Binding DataContext.WordWrap,
+                                                              RelativeSource={RelativeSource AncestorType=Window},
+                                                              Converter={StaticResource BoolToTextWrapping}}"
+                                               ToolTip="{Binding Message}" />
+                                </DockPanel>
+                            </Border>
+                        </DataTemplate>
+                    </ItemsControl.ItemTemplate>
+                </ItemsControl>
+            </Grid>
+        </Border>
+
+        <!-- Row 3: Status bar -->
+        <Border Grid.Row="3" Margin="0,8,0,0" Padding="4,2">
+            <DockPanel>
+                <TextBlock DockPanel.Dock="Right" Style="{StaticResource CaptionText}"
+                           VerticalAlignment="Center" HorizontalAlignment="Right">
+                    <Run Text="Font: " />
+                    <Run Text="{Binding LogFontSize, Mode=OneWay, StringFormat='{}{0:0}px'}"
+                         FontWeight="SemiBold" />
+                </TextBlock>
+                <TextBlock Style="{StaticResource CaptionText}" VerticalAlignment="Center">
+                    <Run Text="Total: " />
+                    <Run Text="{Binding DeploymentLog.Count, Mode=OneWay}"
+                         FontWeight="SemiBold" Foreground="{StaticResource HpBlueBrush}" />
+                    <Run Text=" entries" />
+                    <Run Text="  |  Showing: " />
+                    <Run Text="{Binding FilteredDeploymentLog.Count, Mode=OneWay}"
+                         FontWeight="SemiBold" />
+                </TextBlock>
+            </DockPanel>
+        </Border>
+    </Grid>
+</Window>
