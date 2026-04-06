@@ -1,0 +1,390 @@
+<UserControl x:Class="HPPAQDeploy.App.Views.GroupsView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:materialDesign="http://materialdesigninxaml.net/winfx/xaml/themes"
+             xmlns:converters="clr-namespace:HPPAQDeploy.App.Converters">
+
+    <UserControl.Resources>
+        <converters:BoolToVisibilityConverter x:Key="BoolToVis" />
+        <converters:InverseBoolToVisibilityConverter x:Key="InverseBoolToVis" />
+        <converters:ZeroToVisibilityConverter x:Key="ZeroToVis" />
+        <converters:NonZeroToVisibilityConverter x:Key="NonZeroToVis" />
+    </UserControl.Resources>
+
+    <Grid>
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+            <RowDefinition Height="Auto" />
+        </Grid.RowDefinitions>
+
+        <!-- Header -->
+        <DockPanel Grid.Row="0" Margin="0,0,0,12">
+            <StackPanel DockPanel.Dock="Left" VerticalAlignment="Center">
+                <TextBlock Text="Groups" Style="{StaticResource PageTitle}" />
+                <TextBlock Text="Organize devices into groups for batch scanning and deployment"
+                           Style="{StaticResource SubtitleText}" Margin="0,2,0,0" />
+            </StackPanel>
+            <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" HorizontalAlignment="Right"
+                        VerticalAlignment="Center">
+                <Button Command="{Binding ToggleCreateFormCommand}"
+                        Style="{StaticResource PrimaryButton}"
+                        Padding="16,6" Height="30" Margin="0,0,8,0">
+                    <StackPanel Orientation="Horizontal">
+                        <materialDesign:PackIcon Kind="Plus" Width="18" Height="18"
+                                                 VerticalAlignment="Center" Margin="0,0,6,0" />
+                        <TextBlock Text="New Group" VerticalAlignment="Center" />
+                    </StackPanel>
+                </Button>
+                <Button Content="Refresh" Command="{Binding LoadGroupsCommand}"
+                        Style="{StaticResource SecondaryButton}"
+                        Padding="16,6" Height="30" />
+            </StackPanel>
+        </DockPanel>
+
+        <!-- Status message -->
+        <Border Grid.Row="1" Margin="0,0,0,8" Padding="4,4"
+                Visibility="{Binding StatusMessage.Length, Converter={StaticResource NonZeroToVis}}">
+            <TextBlock Text="{Binding StatusMessage}" Style="{StaticResource BodyText}"
+                       Foreground="{StaticResource AccentGreenBrush}" />
+        </Border>
+
+        <!-- Create Group Form -->
+        <Border Grid.Row="2" Style="{StaticResource AppCard}" Margin="0,0,0,12" Padding="16,14"
+                Visibility="{Binding ShowCreateForm, Converter={StaticResource BoolToVis}}">
+            <StackPanel>
+                <StackPanel Orientation="Horizontal" Margin="0,0,0,12">
+                    <materialDesign:PackIcon Kind="FolderPlusOutline" Width="22" Height="22"
+                                             Foreground="{StaticResource HpBlueBrush}"
+                                             VerticalAlignment="Center" Margin="0,0,8,0" />
+                    <TextBlock Text="Create New Group" Style="{StaticResource SectionTitle}" VerticalAlignment="Center" />
+                </StackPanel>
+                <Grid Margin="0,0,0,12">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="16" />
+                        <ColumnDefinition Width="2*" />
+                    </Grid.ColumnDefinitions>
+                    <StackPanel Grid.Column="0">
+                        <TextBlock Text="Group Name" Style="{StaticResource CaptionText}" Margin="0,0,0,4" />
+                        <TextBox Text="{Binding NewGroupName, UpdateSourceTrigger=PropertyChanged}"
+                                 Style="{StaticResource AppTextBox}" />
+                    </StackPanel>
+                    <StackPanel Grid.Column="2">
+                        <TextBlock Text="Description (optional)" Style="{StaticResource CaptionText}" Margin="0,0,0,4" />
+                        <TextBox Text="{Binding NewGroupDescription, UpdateSourceTrigger=PropertyChanged}"
+                                 Style="{StaticResource AppTextBox}" />
+                    </StackPanel>
+                </Grid>
+                <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+                    <Button Content="Cancel" Command="{Binding ToggleCreateFormCommand}"
+                            Style="{StaticResource SecondaryButton}"
+                            Height="28" Padding="20,4" Margin="0,0,8,0" />
+                    <Button Command="{Binding CreateGroupCommand}"
+                            Style="{StaticResource SuccessButton}"
+                            Height="28" Padding="20,4">
+                        <StackPanel Orientation="Horizontal">
+                            <materialDesign:PackIcon Kind="Check" Width="16" Height="16"
+                                                     VerticalAlignment="Center" Margin="0,0,6,0" />
+                            <TextBlock Text="Create Group" VerticalAlignment="Center" />
+                        </StackPanel>
+                    </Button>
+                </StackPanel>
+            </StackPanel>
+        </Border>
+
+        <!-- Main two-panel area -->
+        <Grid Grid.Row="3">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="300" MinWidth="240" MaxWidth="400" />
+                <ColumnDefinition Width="14" />
+                <ColumnDefinition Width="*" />
+            </Grid.ColumnDefinitions>
+
+            <!-- Left: Group list -->
+            <Border Grid.Column="0" Style="{StaticResource AppCard}">
+                <Grid>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="*" />
+                    </Grid.RowDefinitions>
+                    <TextBlock Grid.Row="0" Style="{StaticResource SectionTitle}" Margin="0,0,0,10">
+                        <Run Text="Groups (" /><Run Text="{Binding Groups.Count, Mode=OneWay}" /><Run Text=")" />
+                    </TextBlock>
+
+                    <!-- Empty state -->
+                    <StackPanel Grid.Row="1" HorizontalAlignment="Center" VerticalAlignment="Center"
+                                Visibility="{Binding Groups.Count, Converter={StaticResource ZeroToVis}}">
+                        <materialDesign:PackIcon Kind="FolderOutline" Width="48" Height="48"
+                                                 HorizontalAlignment="Center"
+                                                 Foreground="{StaticResource TextSecondaryBrush}" Opacity="0.3" />
+                        <TextBlock Text="No groups yet" Style="{StaticResource SubtitleText}"
+                                   HorizontalAlignment="Center" Margin="0,10,0,4" />
+                        <TextBlock Text="Click 'New Group' above" Style="{StaticResource CaptionText}"
+                                   HorizontalAlignment="Center" />
+                    </StackPanel>
+
+                    <!-- Group list -->
+                    <ListView Grid.Row="1" ItemsSource="{Binding Groups}"
+                              SelectedItem="{Binding SelectedGroup}"
+                              Visibility="{Binding Groups.Count, Converter={StaticResource NonZeroToVis}}"
+                              Background="Transparent" BorderThickness="0"
+                              ScrollViewer.HorizontalScrollBarVisibility="Disabled">
+                        <ListView.ItemContainerStyle>
+                            <Style TargetType="ListViewItem" BasedOn="{StaticResource MaterialDesignListBoxItem}">
+                                <Setter Property="Padding" Value="4,3" />
+                                <Setter Property="Margin" Value="0,2" />
+                                <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+                            </Style>
+                        </ListView.ItemContainerStyle>
+                        <ListView.ItemTemplate>
+                            <DataTemplate>
+                                <Border CornerRadius="6" Padding="12,10"
+                                        Background="{StaticResource SubtleHighlightBrush}">
+                                    <DockPanel>
+                                        <Border DockPanel.Dock="Right" CornerRadius="12" Padding="10,4"
+                                                Background="{StaticResource HpBlueBrush}" Opacity="0.85"
+                                                VerticalAlignment="Center">
+                                            <TextBlock Text="{Binding DeviceCount}" FontWeight="Bold"
+                                                       Foreground="White" FontSize="13"
+                                                       HorizontalAlignment="Center" />
+                                        </Border>
+                                        <StackPanel VerticalAlignment="Center" Margin="0,0,10,0">
+                                            <TextBlock Text="{Binding Name}" Style="{StaticResource BodyText}"
+                                                       FontWeight="SemiBold" TextTrimming="CharacterEllipsis" />
+                                            <TextBlock Style="{StaticResource CaptionText}" Margin="0,2,0,0"
+                                                       TextTrimming="CharacterEllipsis">
+                                                <Run Text="{Binding DeviceCount, Mode=OneWay}" />
+                                                <Run Text=" device(s)" />
+                                            </TextBlock>
+                                        </StackPanel>
+                                    </DockPanel>
+                                </Border>
+                            </DataTemplate>
+                        </ListView.ItemTemplate>
+                    </ListView>
+                </Grid>
+            </Border>
+
+            <!-- Right: Group detail -->
+            <Border Grid.Column="2" Style="{StaticResource AppCard}">
+                <Grid>
+                    <!-- No group selected -->
+                    <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center"
+                                Visibility="{Binding HasSelectedGroup, Converter={StaticResource InverseBoolToVis}}">
+                        <materialDesign:PackIcon Kind="AccountGroup" Width="56" Height="56"
+                                                 HorizontalAlignment="Center"
+                                                 Foreground="{StaticResource TextSecondaryBrush}" Opacity="0.3" />
+                        <TextBlock Text="Select a group" Style="{StaticResource SubtitleText}"
+                                   HorizontalAlignment="Center" Margin="0,12,0,4" />
+                        <TextBlock Text="Choose a group from the left to manage its devices"
+                                   Style="{StaticResource CaptionText}"
+                                   HorizontalAlignment="Center" />
+                    </StackPanel>
+
+                    <!-- Group detail -->
+                    <Grid Visibility="{Binding HasSelectedGroup, Converter={StaticResource BoolToVis}}">
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="*" />
+                            <RowDefinition Height="Auto" />
+                        </Grid.RowDefinitions>
+
+                        <!-- Group header -->
+                        <Border Grid.Row="0" Background="{StaticResource SubtleBackgroundBrush}"
+                                CornerRadius="6" Padding="14,10" Margin="0,0,0,12">
+                            <DockPanel>
+                                <Button DockPanel.Dock="Right" Content="Delete Group"
+                                        Command="{Binding DeleteGroupCommand}"
+                                        Style="{StaticResource DangerButton}"
+                                        Height="30" Padding="12,2"
+                                        HorizontalAlignment="Right" VerticalAlignment="Center" />
+                                <StackPanel VerticalAlignment="Center">
+                                    <TextBlock Style="{StaticResource SectionTitle}" FontSize="18">
+                                        <Run Text="{Binding SelectedGroup.Name, Mode=OneWay}" FontWeight="Bold" />
+                                    </TextBlock>
+                                    <TextBlock Style="{StaticResource CaptionText}" Margin="0,3,0,0">
+                                        <Run Text="{Binding GroupDevices.Count, Mode=OneWay}" FontWeight="SemiBold"
+                                             Foreground="{StaticResource HpBlueBrush}" />
+                                        <Run Text=" devices  |  Created " />
+                                        <Run Text="{Binding SelectedGroup.Created, Mode=OneWay, StringFormat='{}{0:MMM d, yyyy}'}" />
+                                    </TextBlock>
+                                    <TextBlock Text="{Binding SelectedGroup.Description}"
+                                               Style="{StaticResource CaptionText}" Margin="0,2,0,0"
+                                               TextWrapping="Wrap" FontStyle="Italic"
+                                               Visibility="{Binding SelectedGroup.Description.Length, Converter={StaticResource NonZeroToVis}, FallbackValue=Collapsed}" />
+                                </StackPanel>
+                            </DockPanel>
+                        </Border>
+
+                        <!-- Devices in group -->
+                        <DockPanel Grid.Row="1">
+                            <TextBlock DockPanel.Dock="Top" Style="{StaticResource SubtitleText}"
+                                       FontWeight="SemiBold" Margin="0,0,0,8">
+                                <Run Text="Devices in Group (" />
+                                <Run Text="{Binding GroupDevices.Count, Mode=OneWay}" />
+                                <Run Text=")" />
+                            </TextBlock>
+
+                            <!-- Empty -->
+                            <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center"
+                                        Visibility="{Binding GroupDevices.Count, Converter={StaticResource ZeroToVis}}">
+                                <materialDesign:PackIcon Kind="MonitorOff" Width="36" Height="30"
+                                                         HorizontalAlignment="Center"
+                                                         Foreground="{StaticResource TextSecondaryBrush}" Opacity="0.3" />
+                                <TextBlock Text="No devices yet" Style="{StaticResource CaptionText}"
+                                           HorizontalAlignment="Center" Margin="0,8,0,2" />
+                                <TextBlock Text="Use the controls below to add devices"
+                                           Style="{StaticResource CaptionText}"
+                                           HorizontalAlignment="Center" />
+                            </StackPanel>
+
+                            <!-- Device list -->
+                            <ListView ItemsSource="{Binding GroupDevices}"
+                                      Visibility="{Binding GroupDevices.Count, Converter={StaticResource NonZeroToVis}}"
+                                      Background="Transparent" BorderThickness="0"
+                                      ScrollViewer.HorizontalScrollBarVisibility="Disabled">
+                                <ListView.ItemContainerStyle>
+                                    <Style TargetType="ListViewItem" BasedOn="{StaticResource MaterialDesignListBoxItem}">
+                                        <Setter Property="Padding" Value="4,2" />
+                                        <Setter Property="Margin" Value="0,1" />
+                                        <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+                                    </Style>
+                                </ListView.ItemContainerStyle>
+                                <ListView.ItemTemplate>
+                                    <DataTemplate>
+                                        <Border Background="{StaticResource SubtleBackgroundBrush}"
+                                                CornerRadius="4" Padding="10,8">
+                                            <DockPanel>
+                                                <Button DockPanel.Dock="Right"
+                                                        Command="{Binding DataContext.RemoveFromGroupCommand,
+                                                                  RelativeSource={RelativeSource AncestorType=UserControl}}"
+                                                        CommandParameter="{Binding}"
+                                                        ToolTip="Remove from group"
+                                                        Background="Transparent" BorderThickness="0" Cursor="Hand"
+                                                        Width="28" Height="28" Padding="0" MinWidth="0">
+                                                    <Button.Template>
+                                                        <ControlTemplate TargetType="Button">
+                                                            <Border x:Name="bd" Background="Transparent" CornerRadius="4"
+                                                                    Width="28" Height="28" HorizontalAlignment="Center" VerticalAlignment="Center">
+                                                                <materialDesign:PackIcon Kind="CloseCircleOutline" Width="16" Height="16"
+                                                                                         HorizontalAlignment="Center" VerticalAlignment="Center"
+                                                                                         Foreground="{StaticResource TextSecondaryBrush}" />
+                                                            </Border>
+                                                            <ControlTemplate.Triggers>
+                                                                <Trigger Property="IsMouseOver" Value="True">
+                                                                    <Setter TargetName="bd" Property="Background" Value="#33F44336" />
+                                                                </Trigger>
+                                                            </ControlTemplate.Triggers>
+                                                        </ControlTemplate>
+                                                    </Button.Template>
+                                                </Button>
+                                                <StackPanel VerticalAlignment="Center">
+                                                    <TextBlock Text="{Binding Hostname}" Style="{StaticResource BodyText}"
+                                                               FontWeight="SemiBold" />
+                                                    <TextBlock Style="{StaticResource CaptionText}" Margin="0,2,0,0">
+                                                        <Run Text="{Binding IpAddress, Mode=OneWay}" />
+                                                        <Run Text=" | " />
+                                                        <Run Text="{Binding Model, Mode=OneWay}" />
+                                                    </TextBlock>
+                                                </StackPanel>
+                                            </DockPanel>
+                                        </Border>
+                                    </DataTemplate>
+                                </ListView.ItemTemplate>
+                            </ListView>
+                        </DockPanel>
+
+                        <!-- Add devices panel -->
+                        <Border Grid.Row="2" Background="{StaticResource SubtleBackgroundBrush}"
+                                CornerRadius="6" Padding="14,12" Margin="0,10,0,0">
+                            <StackPanel>
+                                <StackPanel Orientation="Horizontal" Margin="0,0,0,10">
+                                    <materialDesign:PackIcon Kind="Plus" Width="20" Height="20"
+                                                             Foreground="{StaticResource AccentGreenBrush}"
+                                                             VerticalAlignment="Center" Margin="0,0,8,0" />
+                                    <TextBlock Text="Add Devices" Style="{StaticResource SectionTitle}" VerticalAlignment="Center" />
+                                </StackPanel>
+
+                                <!-- Bulk add row -->
+                                <DockPanel Margin="0,0,0,8">
+                                    <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" Margin="8,0,0,0">
+                                        <Button Command="{Binding AssignByModelCommand}"
+                                                ToolTip="Add all devices of the selected model"
+                                                Style="{StaticResource PrimaryButton}"
+                                                Height="28" Padding="10,2" Margin="0,0,6,0">
+                                            <TextBlock Text="Add by Model" />
+                                        </Button>
+                                        <Button Content="Add All Ungrouped" Command="{Binding AssignAllToGroupCommand}"
+                                                ToolTip="Add every device not already in a group"
+                                                Style="{StaticResource SuccessButton}"
+                                                Height="28" Padding="10,2" />
+                                    </StackPanel>
+                                    <ComboBox ItemsSource="{Binding AvailableModels}"
+                                              SelectedItem="{Binding SelectedModel, Mode=TwoWay}"
+                                              Foreground="{StaticResource TextPrimaryBrush}"
+                                              Height="28" FontSize="12"
+                                              materialDesign:HintAssist.Hint="Select model..."
+                                              ToolTip="Choose a model to add all matching devices" />
+                                </DockPanel>
+
+                                <Separator Margin="0,0,0,8" />
+
+                                <!-- Add individual device -->
+                                <TextBlock Text="Or add individually:" Style="{StaticResource CaptionText}" Margin="0,0,0,6" />
+                                <DockPanel Margin="0,0,0,6">
+                                    <Button DockPanel.Dock="Right" Content="Assign"
+                                            Command="{Binding AssignToGroupCommand}"
+                                            Style="{StaticResource SecondaryButton}"
+                                            Height="30" Padding="16,4" Margin="8,0,0,0" />
+                                    <TextBox Text="{Binding DeviceSearchText, UpdateSourceTrigger=PropertyChanged}"
+                                             Style="{StaticResource AppTextBox}"
+                                             ToolTip="Search for a specific device to add" />
+                                </DockPanel>
+                                <ListView ItemsSource="{Binding FilteredAvailableDevices}"
+                                          SelectedItem="{Binding SelectedAvailableDevice, Mode=TwoWay}"
+                                          Background="Transparent" BorderThickness="0"
+                                          MaxHeight="120"
+                                          ScrollViewer.HorizontalScrollBarVisibility="Disabled">
+                                    <ListView.ItemContainerStyle>
+                                        <Style TargetType="ListViewItem" BasedOn="{StaticResource MaterialDesignListBoxItem}">
+                                            <Setter Property="Padding" Value="4,2" />
+                                            <Setter Property="Margin" Value="0,1" />
+                                            <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+                                        </Style>
+                                    </ListView.ItemContainerStyle>
+                                    <ListView.ItemTemplate>
+                                        <DataTemplate>
+                                            <TextBlock Style="{StaticResource BodyText}" VerticalAlignment="Center"
+                                                       Padding="4,3">
+                                                <Run Text="{Binding Hostname, Mode=OneWay}" FontWeight="SemiBold" />
+                                                <Run Text=" — " Foreground="{StaticResource TextSecondaryBrush}" />
+                                                <Run Text="{Binding IpAddress, Mode=OneWay}" Foreground="{StaticResource TextSecondaryBrush}" />
+                                                <Run Text=" | " Foreground="{StaticResource TextSecondaryBrush}" />
+                                                <Run Text="{Binding Model, Mode=OneWay}" Foreground="{StaticResource TextSecondaryBrush}" />
+                                            </TextBlock>
+                                        </DataTemplate>
+                                    </ListView.ItemTemplate>
+                                </ListView>
+                            </StackPanel>
+                        </Border>
+                    </Grid>
+                </Grid>
+            </Border>
+        </Grid>
+
+        <!-- Status bar -->
+        <Border Grid.Row="4" Margin="0,10,0,0" Padding="4,4">
+            <TextBlock Style="{StaticResource CaptionText}" VerticalAlignment="Center">
+                <Run Text="Total Groups: " />
+                <Run Text="{Binding Groups.Count, Mode=OneWay}" FontWeight="SemiBold"
+                     Foreground="{StaticResource HpBlueBrush}" />
+                <Run Text="  |  Devices in Groups: " />
+                <Run Text="{Binding TotalDevicesInGroups, Mode=OneWay}" FontWeight="SemiBold"
+                     Foreground="{StaticResource HpBlueBrush}" />
+            </TextBlock>
+        </Border>
+    </Grid>
+</UserControl>

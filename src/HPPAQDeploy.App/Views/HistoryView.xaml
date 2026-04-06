@@ -1,0 +1,245 @@
+<UserControl x:Class="HPPAQDeploy.App.Views.HistoryView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:materialDesign="http://materialdesigninxaml.net/winfx/xaml/themes"
+             xmlns:converters="clr-namespace:HPPAQDeploy.App.Converters">
+
+    <UserControl.Resources>
+        <converters:BoolToVisibilityConverter x:Key="BoolToVis" />
+        <converters:InverseBoolToVisibilityConverter x:Key="InverseBoolToVis" />
+    </UserControl.Resources>
+
+    <Grid>
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+            <RowDefinition Height="Auto" />
+        </Grid.RowDefinitions>
+
+        <!-- Header -->
+        <DockPanel Grid.Row="0" Margin="0,0,0,12">
+            <StackPanel Orientation="Horizontal" DockPanel.Dock="Left">
+                <StackPanel>
+                    <TextBlock Text="Deployment History" Style="{StaticResource PageTitle}" />
+                    <TextBlock Text="View and export past deployment records" Style="{StaticResource PageSubtitle}" />
+                </StackPanel>
+                <TextBlock VerticalAlignment="Center" Margin="12,0,0,16" Style="{StaticResource SectionTitle}"
+                           Foreground="{StaticResource TextSecondaryBrush}">
+                    <Run Text="(" /><Run Text="{Binding FilteredHistory.Count, Mode=OneWay}" /><Run Text=")" />
+                </TextBlock>
+            </StackPanel>
+            <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" HorizontalAlignment="Right">
+                <Button Content="Export CSV" Command="{Binding ExportHistoryCsvCommand}"
+                        Style="{StaticResource SecondaryButton}" Margin="0,0,8,0"
+                        ToolTip="Export deployment history to CSV" />
+                <Button Content="Clear History" Command="{Binding ClearHistoryCommand}"
+                        Style="{StaticResource DangerButton}" Margin="0,0,8,0"
+                        ToolTip="Delete all deployment history records" />
+                <Button Content="Refresh" Command="{Binding LoadHistoryCommand}"
+                        Style="{StaticResource SecondaryButton}"
+                        ToolTip="Reload deployment history" />
+            </StackPanel>
+        </DockPanel>
+
+        <!-- Filter Toolbar: Search + Date Range + Action Filter -->
+        <Border Grid.Row="1" Margin="0,0,0,12" Style="{StaticResource ToolbarCard}" Padding="12,8">
+            <DockPanel>
+                <!-- Action filter (right) -->
+                <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Center" Margin="16,0,0,0">
+                    <TextBlock Text="Action:" Style="{StaticResource CaptionText}"
+                               VerticalAlignment="Center" Margin="0,0,6,0" />
+                    <ComboBox ItemsSource="{Binding ActionFilterOptions}"
+                              SelectedItem="{Binding SelectedActionFilter}"
+                              Foreground="{StaticResource TextPrimaryBrush}"
+                              MinWidth="100" Height="28" FontSize="12" />
+                </StackPanel>
+
+                <!-- Date range filter -->
+                <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Center" Margin="16,0,0,0">
+                    <TextBlock Text="Range:" Style="{StaticResource CaptionText}"
+                               VerticalAlignment="Center" Margin="0,0,6,0" />
+                    <ComboBox ItemsSource="{Binding DateRangeOptions}"
+                              SelectedItem="{Binding SelectedDateRange}"
+                              Foreground="{StaticResource TextPrimaryBrush}"
+                              MinWidth="120" Height="28" FontSize="12" />
+                </StackPanel>
+
+                <!-- Search text -->
+                <DockPanel VerticalAlignment="Center">
+                    <materialDesign:PackIcon Kind="Magnify" Width="16" Height="16"
+                                             Foreground="{StaticResource TextSecondaryBrush}"
+                                             VerticalAlignment="Center" Margin="4,0,8,0" DockPanel.Dock="Left" />
+                    <TextBox Text="{Binding FilterText, UpdateSourceTrigger=PropertyChanged, Delay=250}"
+                             materialDesign:HintAssist.Hint="Filter by hostname, IP, update name, SoftPaq ID..."
+                             Style="{StaticResource FilterBarTextBox}" />
+                </DockPanel>
+            </DockPanel>
+        </Border>
+
+        <!-- Summary Stats Row -->
+        <UniformGrid Grid.Row="2" Rows="1" Columns="5" Margin="0,0,0,12"
+                     Visibility="{Binding HasSummaryStats, Converter={StaticResource BoolToVis}}">
+            <!-- Deployed -->
+            <Border Style="{StaticResource AppCard}" Margin="0,0,4,0" Padding="12,8">
+                <StackPanel>
+                    <DockPanel>
+                        <materialDesign:PackIcon Kind="CheckCircle" Width="18" Height="18"
+                                                 Foreground="{StaticResource AccentGreenBrush}"
+                                                 DockPanel.Dock="Right" VerticalAlignment="Center" />
+                        <TextBlock Text="{Binding TotalDeployed}" FontSize="20" FontWeight="Bold"
+                                   Foreground="{StaticResource AccentGreenBrush}" />
+                    </DockPanel>
+                    <TextBlock Text="Deployed" Style="{StaticResource StatLabel}" />
+                </StackPanel>
+            </Border>
+            <!-- Failed -->
+            <Border Style="{StaticResource AppCard}" Margin="4,0" Padding="12,8">
+                <StackPanel>
+                    <DockPanel>
+                        <materialDesign:PackIcon Kind="CloseCircle" Width="18" Height="18"
+                                                 Foreground="{StaticResource AccentRedBrush}"
+                                                 DockPanel.Dock="Right" VerticalAlignment="Center" />
+                        <TextBlock Text="{Binding TotalFailed}" FontSize="20" FontWeight="Bold"
+                                   Foreground="{StaticResource AccentRedBrush}" />
+                    </DockPanel>
+                    <TextBlock Text="Failed" Style="{StaticResource StatLabel}" />
+                </StackPanel>
+            </Border>
+            <!-- Success Rate -->
+            <Border Style="{StaticResource AppCard}" Margin="4,0" Padding="12,8">
+                <StackPanel>
+                    <TextBlock FontSize="20" FontWeight="Bold"
+                               Foreground="{StaticResource HpBlueBrush}">
+                        <Run Text="{Binding SuccessRate, StringFormat={}{0:0.#}}" /><Run Text="%" />
+                    </TextBlock>
+                    <TextBlock Text="Success Rate" Style="{StaticResource StatLabel}" />
+                </StackPanel>
+            </Border>
+            <!-- Unique Devices -->
+            <Border Style="{StaticResource AppCard}" Margin="4,0" Padding="12,8">
+                <StackPanel>
+                    <TextBlock Text="{Binding UniqueDevices}" FontSize="20" FontWeight="Bold"
+                               Foreground="{StaticResource TextPrimaryBrush}" />
+                    <TextBlock Text="Devices" Style="{StaticResource StatLabel}" />
+                </StackPanel>
+            </Border>
+            <!-- Unique Updates -->
+            <Border Style="{StaticResource AppCard}" Margin="4,0,0,0" Padding="12,8">
+                <StackPanel>
+                    <TextBlock Text="{Binding UniqueUpdates}" FontSize="20" FontWeight="Bold"
+                               Foreground="{StaticResource TextPrimaryBrush}" />
+                    <TextBlock Text="Updates" Style="{StaticResource StatLabel}" />
+                </StackPanel>
+            </Border>
+        </UniformGrid>
+
+        <!-- Empty State: No history at all -->
+        <Border Grid.Row="3" Style="{StaticResource AppCard}">
+            <Border.Visibility>
+                <Binding Path="HasAnyHistory" Converter="{StaticResource InverseBoolToVis}" />
+            </Border.Visibility>
+            <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center" Margin="0,40">
+                <materialDesign:PackIcon Kind="History" Width="48" Height="48"
+                                         HorizontalAlignment="Center"
+                                         Foreground="{StaticResource TextSecondaryBrush}" />
+                <TextBlock Text="No deployment history" Style="{StaticResource SectionTitle}"
+                           HorizontalAlignment="Center" Margin="0,12,0,4" />
+                <TextBlock Text="Deployment records will appear here after updates are installed."
+                           Style="{StaticResource BodyText}" HorizontalAlignment="Center"
+                           Foreground="{StaticResource TextSecondaryBrush}" />
+            </StackPanel>
+        </Border>
+
+        <!-- Empty State: Filter returned no results -->
+        <Border Grid.Row="3" Style="{StaticResource AppCard}"
+                Visibility="{Binding IsFilterEmpty, Converter={StaticResource BoolToVis}}">
+            <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center" Margin="0,40">
+                <materialDesign:PackIcon Kind="FilterRemoveOutline" Width="48" Height="48"
+                                         HorizontalAlignment="Center"
+                                         Foreground="{StaticResource TextSecondaryBrush}" />
+                <TextBlock Text="No matching records" Style="{StaticResource SectionTitle}"
+                           HorizontalAlignment="Center" Margin="0,12,0,4" />
+                <TextBlock Text="No deployment records match the current filter."
+                           Style="{StaticResource BodyText}" HorizontalAlignment="Center"
+                           Foreground="{StaticResource TextSecondaryBrush}" />
+            </StackPanel>
+        </Border>
+
+        <!-- History DataGrid -->
+        <Border Grid.Row="3" Style="{StaticResource AppCard}"
+                Visibility="{Binding HasHistory, Converter={StaticResource BoolToVis}}">
+            <DataGrid ItemsSource="{Binding FilteredHistory}"
+                      AutoGenerateColumns="False" IsReadOnly="True"
+                      Style="{StaticResource ProfessionalDataGrid}"
+                      VirtualizingStackPanel.IsVirtualizing="True"
+                      VirtualizingStackPanel.VirtualizationMode="Recycling"
+                      CanUserResizeColumns="True"
+                      SelectionMode="Single">
+                <DataGrid.RowStyle>
+                    <Style TargetType="DataGridRow" BasedOn="{StaticResource ProfessionalDataGridRow}">
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding Action}" Value="Deployed">
+                                <Setter Property="Background" Value="#08388E3C" />
+                            </DataTrigger>
+                            <DataTrigger Binding="{Binding Action}" Value="Failed">
+                                <Setter Property="Background" Value="#08F44336" />
+                            </DataTrigger>
+                            <DataTrigger Binding="{Binding Action}" Value="Cancelled">
+                                <Setter Property="Background" Value="#08FFA726" />
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </DataGrid.RowStyle>
+                <DataGrid.Columns>
+                    <DataGridTextColumn Header="Timestamp"
+                                        Binding="{Binding Timestamp, StringFormat='{}{0:yyyy-MM-dd HH:mm:ss}'}"
+                                        Width="170" MinWidth="130" />
+                    <DataGridTextColumn Header="Hostname" Binding="{Binding DeviceHostname}" Width="150" MinWidth="80" />
+                    <DataGridTextColumn Header="IP Address" Binding="{Binding DeviceIpAddress}" Width="130" MinWidth="80" />
+                    <DataGridTextColumn Header="Update" Binding="{Binding UpdateName}" Width="*">
+                        <DataGridTextColumn.ElementStyle>
+                            <Style TargetType="TextBlock"><Setter Property="ToolTip" Value="{Binding UpdateName}" /></Style>
+                        </DataGridTextColumn.ElementStyle>
+                    </DataGridTextColumn>
+                    <DataGridTextColumn Header="SoftPaq" Binding="{Binding SoftPaqId}" Width="90" />
+                    <DataGridTextColumn Header="Category" Binding="{Binding Category}" Width="100" />
+                    <DataGridTemplateColumn Header="Action" Width="90">
+                        <DataGridTemplateColumn.CellTemplate>
+                            <DataTemplate>
+                                <TextBlock Text="{Binding Action}" FontWeight="SemiBold">
+                                    <TextBlock.Style>
+                                        <Style TargetType="TextBlock">
+                                            <Setter Property="Foreground" Value="{StaticResource TextPrimaryBrush}" />
+                                            <Style.Triggers>
+                                                <DataTrigger Binding="{Binding Action}" Value="Deployed">
+                                                    <Setter Property="Foreground" Value="{StaticResource AccentGreenBrush}" />
+                                                </DataTrigger>
+                                                <DataTrigger Binding="{Binding Action}" Value="Failed">
+                                                    <Setter Property="Foreground" Value="{StaticResource AccentRedBrush}" />
+                                                </DataTrigger>
+                                                <DataTrigger Binding="{Binding Action}" Value="Cancelled">
+                                                    <Setter Property="Foreground" Value="{StaticResource AccentAmberBrush}" />
+                                                </DataTrigger>
+                                            </Style.Triggers>
+                                        </Style>
+                                    </TextBlock.Style>
+                                </TextBlock>
+                            </DataTemplate>
+                        </DataGridTemplateColumn.CellTemplate>
+                    </DataGridTemplateColumn>
+                    <DataGridTextColumn Header="Error" Binding="{Binding ErrorMessage}" Width="200">
+                        <DataGridTextColumn.ElementStyle>
+                            <Style TargetType="TextBlock"><Setter Property="ToolTip" Value="{Binding ErrorMessage}" /></Style>
+                        </DataGridTextColumn.ElementStyle>
+                    </DataGridTextColumn>
+                </DataGrid.Columns>
+            </DataGrid>
+        </Border>
+
+        <!-- Status -->
+        <TextBlock Grid.Row="4" Text="{Binding StatusMessage}" Margin="4,8,0,0"
+                   Style="{StaticResource SubtitleText}" Foreground="{StaticResource AccentGreenBrush}" />
+    </Grid>
+</UserControl>

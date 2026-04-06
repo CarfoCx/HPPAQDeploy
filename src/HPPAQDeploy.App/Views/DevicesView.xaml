@@ -1,0 +1,474 @@
+<UserControl x:Class="HPPAQDeploy.App.Views.DevicesView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:materialDesign="http://materialdesigninxaml.net/winfx/xaml/themes"
+             xmlns:converters="clr-namespace:HPPAQDeploy.App.Converters">
+
+    <UserControl.Resources>
+        <converters:StatusToColorConverter x:Key="StatusToColor" />
+        <converters:BoolToVisibilityConverter x:Key="BoolToVis" />
+        <converters:InverseBoolToVisibilityConverter x:Key="InverseBoolToVis" />
+    </UserControl.Resources>
+
+    <Grid>
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+        </Grid.RowDefinitions>
+
+        <!-- Header with actions -->
+        <DockPanel Grid.Row="0" Margin="0,0,0,12">
+            <StackPanel Orientation="Horizontal" DockPanel.Dock="Left">
+                <TextBlock Text="Devices" Style="{StaticResource PageTitle}" />
+                <TextBlock VerticalAlignment="Center" Margin="8,0,0,16" Style="{StaticResource SectionTitle}"
+                           Foreground="{StaticResource TextSecondaryBrush}">
+                    <Run Text="(" /><Run Text="{Binding FilteredDevices.Count, Mode=OneWay}" /><Run Text=")" />
+                </TextBlock>
+            </StackPanel>
+            <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" HorizontalAlignment="Right">
+                <Button Command="{Binding ToggleScanPanelCommand}"
+                        Style="{StaticResource PrimaryButton}"
+                        Margin="0,0,8,0" Padding="16,6"
+                        ToolTip="Add devices by IP address or scan a network range">
+                    <StackPanel Orientation="Horizontal">
+                        <materialDesign:PackIcon Kind="Plus" Width="16" Height="16" VerticalAlignment="Center" Margin="0,0,6,0" />
+                        <TextBlock Text="Add Hosts" VerticalAlignment="Center" />
+                    </StackPanel>
+                </Button>
+                <Button Content="Delete Selected" Command="{Binding DeleteSelectedDevicesCommand}"
+                        Style="{StaticResource DangerButton}" Margin="0,0,8,0" Padding="12,6"
+                        ToolTip="Delete all selected devices" />
+                <Button Content="Refresh" Command="{Binding LoadDevicesCommand}"
+                        Style="{StaticResource SecondaryButton}" Margin="0,0,8,0"
+                        ToolTip="Reload devices from database" />
+                <Button Content="Export CSV" Command="{Binding ExportCsvCommand}"
+                        Style="{StaticResource SecondaryButton}" Margin="0,0,8,0" />
+                <Button Content="Clear All" Command="{Binding ClearAllDevicesCommand}"
+                        Style="{StaticResource DangerButton}"
+                        ToolTip="Remove all devices from the database" />
+            </StackPanel>
+        </DockPanel>
+
+        <!-- Filter bar -->
+        <Border Grid.Row="1" Style="{StaticResource FilterBarBorder}">
+            <DockPanel>
+                <materialDesign:PackIcon Kind="Magnify" Width="16" Height="16"
+                                         Foreground="{StaticResource TextSecondaryBrush}"
+                                         VerticalAlignment="Center" Margin="4,0,8,0" DockPanel.Dock="Left" />
+                <TextBox Text="{Binding FilterText, UpdateSourceTrigger=PropertyChanged, Delay=300}"
+                         materialDesign:HintAssist.Hint="Filter by hostname, IP, model, serial, group..."
+                         Style="{StaticResource FilterBarTextBox}" />
+            </DockPanel>
+        </Border>
+
+        <!-- Main content: Device grid + detail panel -->
+        <Grid Grid.Row="2">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="2*" MinWidth="400" />
+                <ColumnDefinition Width="Auto" />
+                <ColumnDefinition Width="*" MinWidth="280" />
+            </Grid.ColumnDefinitions>
+
+            <!-- Empty State: No devices at all -->
+            <Border Grid.Column="0" Style="{StaticResource AppCard}">
+                <Border.Visibility>
+                    <Binding Path="HasAnyDevices" Converter="{StaticResource InverseBoolToVis}" />
+                </Border.Visibility>
+                <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center" Margin="0,40">
+                    <materialDesign:PackIcon Kind="MonitorOff" Width="48" Height="48"
+                                             HorizontalAlignment="Center"
+                                             Foreground="{StaticResource TextSecondaryBrush}" />
+                    <TextBlock Text="No devices found" Style="{StaticResource SectionTitle}"
+                               HorizontalAlignment="Center" Margin="0,12,0,4" />
+                    <TextBlock Text="Click 'Add Hosts' to discover HP devices on your network, or add one manually."
+                               Style="{StaticResource BodyText}" HorizontalAlignment="Center"
+                               Foreground="{StaticResource TextSecondaryBrush}" />
+                </StackPanel>
+            </Border>
+
+            <!-- Empty State: Filter returned no results -->
+            <Border Grid.Column="0" Style="{StaticResource AppCard}"
+                    Visibility="{Binding IsFilterEmpty, Converter={StaticResource BoolToVis}}">
+                <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center" Margin="0,40">
+                    <materialDesign:PackIcon Kind="FilterRemoveOutline" Width="48" Height="48"
+                                             HorizontalAlignment="Center"
+                                             Foreground="{StaticResource TextSecondaryBrush}" />
+                    <TextBlock Text="No matching devices" Style="{StaticResource SectionTitle}"
+                               HorizontalAlignment="Center" Margin="0,12,0,4" />
+                    <TextBlock Style="{StaticResource BodyText}" HorizontalAlignment="Center"
+                               Foreground="{StaticResource TextSecondaryBrush}">
+                        <Run Text="No devices match the current filter. Try adjusting your search." />
+                    </TextBlock>
+                </StackPanel>
+            </Border>
+
+            <!-- Devices Grid (Master) -->
+            <Border Grid.Column="0" Style="{StaticResource AppCard}"
+                    Visibility="{Binding HasDevices, Converter={StaticResource BoolToVis}}">
+                <DataGrid ItemsSource="{Binding FilteredDevices}"
+                          SelectedItem="{Binding SelectedDevice}"
+                          AutoGenerateColumns="False" IsReadOnly="True"
+                          Style="{StaticResource ProfessionalDataGrid}"
+                          VirtualizingStackPanel.IsVirtualizing="True"
+                          VirtualizingStackPanel.VirtualizationMode="Recycling"
+                          CanUserResizeColumns="False"
+                          CanUserReorderColumns="False"
+                          SelectionMode="Extended">
+                    <DataGrid.ContextMenu>
+                        <ContextMenu>
+                            <MenuItem Header="Copy Hostname" Command="{Binding CopyHostnameCommand}" />
+                            <MenuItem Header="Copy IP Address" Command="{Binding CopyIpAddressCommand}" />
+                            <Separator />
+                            <MenuItem Header="Delete Device" Command="{Binding DeleteDeviceCommand}"
+                                      CommandParameter="{Binding SelectedDevice}" />
+                        </ContextMenu>
+                    </DataGrid.ContextMenu>
+                    <DataGrid.Columns>
+                        <DataGridTemplateColumn Header="Hostname" Width="SizeToCells">
+                            <DataGridTemplateColumn.CellTemplate>
+                                <DataTemplate>
+                                    <TextBlock Text="{Binding Hostname}" TextWrapping="Wrap" ToolTip="{Binding Hostname}" />
+                                </DataTemplate>
+                            </DataGridTemplateColumn.CellTemplate>
+                        </DataGridTemplateColumn>
+                        <DataGridTemplateColumn Header="IP Address" Width="SizeToCells">
+                            <DataGridTemplateColumn.CellTemplate>
+                                <DataTemplate>
+                                    <TextBlock Text="{Binding IpAddress}" TextWrapping="Wrap" />
+                                </DataTemplate>
+                            </DataGridTemplateColumn.CellTemplate>
+                        </DataGridTemplateColumn>
+                        <DataGridTemplateColumn Header="Model" Width="SizeToCells">
+                            <DataGridTemplateColumn.CellTemplate>
+                                <DataTemplate>
+                                    <TextBlock Text="{Binding Model}" TextWrapping="Wrap" ToolTip="{Binding Model}" />
+                                </DataTemplate>
+                            </DataGridTemplateColumn.CellTemplate>
+                        </DataGridTemplateColumn>
+                        <DataGridTemplateColumn Header="Product ID" Width="SizeToCells">
+                            <DataGridTemplateColumn.CellTemplate>
+                                <DataTemplate>
+                                    <TextBlock Text="{Binding ProductId}" TextWrapping="Wrap" />
+                                </DataTemplate>
+                            </DataGridTemplateColumn.CellTemplate>
+                        </DataGridTemplateColumn>
+                        <DataGridTemplateColumn Header="Group" Width="SizeToCells">
+                            <DataGridTemplateColumn.CellTemplate>
+                                <DataTemplate>
+                                    <TextBlock Text="{Binding GroupName}" TextWrapping="Wrap" />
+                                </DataTemplate>
+                            </DataGridTemplateColumn.CellTemplate>
+                        </DataGridTemplateColumn>
+                        <DataGridTemplateColumn Header="Status" Width="SizeToCells">
+                            <DataGridTemplateColumn.CellTemplate>
+                                <DataTemplate>
+                                    <TextBlock Text="{Binding Status}"
+                                               Foreground="{Binding Status, Converter={StaticResource StatusToColor}}"
+                                               FontWeight="SemiBold" TextWrapping="Wrap" />
+                                </DataTemplate>
+                            </DataGridTemplateColumn.CellTemplate>
+                        </DataGridTemplateColumn>
+                        <DataGridTemplateColumn Header="Updates" Width="SizeToHeader">
+                            <DataGridTemplateColumn.CellTemplate>
+                                <DataTemplate>
+                                    <TextBlock Text="{Binding Recommendations.Count}" />
+                                </DataTemplate>
+                            </DataGridTemplateColumn.CellTemplate>
+                        </DataGridTemplateColumn>
+                        <DataGridTemplateColumn Header="Last Seen" Width="SizeToCells">
+                            <DataGridTemplateColumn.CellTemplate>
+                                <DataTemplate>
+                                    <TextBlock Text="{Binding LastSeenText}"
+                                               ToolTip="{Binding LastScanned, StringFormat='{}{0:yyyy-MM-dd HH:mm:ss}'}" />
+                                </DataTemplate>
+                            </DataGridTemplateColumn.CellTemplate>
+                        </DataGridTemplateColumn>
+                        <DataGridTemplateColumn Header="Last Analyzed" Width="SizeToCells">
+                            <DataGridTemplateColumn.CellTemplate>
+                                <DataTemplate>
+                                    <TextBlock Text="{Binding LastAnalyzed, StringFormat='{}{0:MM/dd HH:mm}'}" TextWrapping="Wrap" />
+                                </DataTemplate>
+                            </DataGridTemplateColumn.CellTemplate>
+                        </DataGridTemplateColumn>
+                        <DataGridTemplateColumn Header="" Width="40">
+                            <DataGridTemplateColumn.CellTemplate>
+                                <DataTemplate>
+                                    <Button Command="{Binding DataContext.DeleteDeviceCommand, RelativeSource={RelativeSource AncestorType=DataGrid}}"
+                                            CommandParameter="{Binding}"
+                                            Width="30" Height="30" Padding="0" MinWidth="0"
+                                            ToolTip="Delete this device"
+                                            Cursor="Hand"
+                                            Background="Transparent" BorderThickness="0">
+                                        <Button.Template>
+                                            <ControlTemplate TargetType="Button">
+                                                <Border x:Name="bd" Background="Transparent" CornerRadius="4"
+                                                        Width="30" Height="30"
+                                                        HorizontalAlignment="Center" VerticalAlignment="Center">
+                                                    <materialDesign:PackIcon Kind="TrashCanOutline" Width="16" Height="16"
+                                                                             HorizontalAlignment="Center" VerticalAlignment="Center"
+                                                                             Foreground="{StaticResource AccentRedBrush}" />
+                                                </Border>
+                                                <ControlTemplate.Triggers>
+                                                    <Trigger Property="IsMouseOver" Value="True">
+                                                        <Setter TargetName="bd" Property="Background" Value="#33F44336" />
+                                                    </Trigger>
+                                                </ControlTemplate.Triggers>
+                                            </ControlTemplate>
+                                        </Button.Template>
+                                    </Button>
+                                </DataTemplate>
+                            </DataGridTemplateColumn.CellTemplate>
+                        </DataGridTemplateColumn>
+                    </DataGrid.Columns>
+                </DataGrid>
+            </Border>
+
+            <!-- Splitter -->
+            <GridSplitter Grid.Column="1" Width="6" HorizontalAlignment="Center"
+                          VerticalAlignment="Stretch" Background="Transparent"
+                          Visibility="{Binding HasSelectedDevice, Converter={StaticResource BoolToVis}}" />
+
+            <!-- Detail Panel -->
+            <Border Grid.Column="2" Style="{StaticResource AppCard}"
+                    Margin="8,0,0,0"
+                    Visibility="{Binding HasSelectedDevice, Converter={StaticResource BoolToVis}}">
+                <ScrollViewer VerticalScrollBarVisibility="Auto" Padding="12">
+                    <StackPanel>
+                        <!-- Header -->
+                        <Border Background="{StaticResource SurfaceOverlayBrush}" Padding="12,10" CornerRadius="6" Margin="-12,-12,-12,12">
+                            <TextBlock Text="{Binding SelectedDevice.Hostname}" FontSize="18" FontWeight="Bold"
+                                       Foreground="{StaticResource TextPrimaryBrush}" TextTrimming="CharacterEllipsis" />
+                        </Border>
+                        <TextBlock Text="{Binding SelectedDevice.IpAddress}" Style="{StaticResource SubtitleText}"
+                                   Foreground="{StaticResource TextSecondaryBrush}" Margin="0,2,0,4" />
+                        <StackPanel Orientation="Horizontal" Margin="0,0,0,8">
+                            <TextBlock Text="{Binding SelectedDevice.Status}"
+                                       Foreground="{Binding SelectedDevice.Status, Converter={StaticResource StatusToColor}}"
+                                       FontWeight="SemiBold" FontSize="12" />
+                            <TextBlock Margin="12,0,0,0" FontSize="12" Foreground="{StaticResource HpBlueBrush}"
+                                       FontWeight="SemiBold">
+                                <Run Text="Group: " /><Run Text="{Binding SelectedDevice.GroupName}" />
+                            </TextBlock>
+                        </StackPanel>
+
+                        <Separator Margin="0,0,0,10" />
+
+                        <!-- Hardware -->
+                        <StackPanel Orientation="Horizontal" Margin="0,0,0,6">
+                            <materialDesign:PackIcon Kind="Memory" Width="16" Height="16"
+                                                     Foreground="{StaticResource TextSecondaryBrush}"
+                                                     VerticalAlignment="Center" Margin="0,0,6,0" />
+                            <TextBlock Text="HARDWARE" Style="{StaticResource SectionLabel}"
+                                       VerticalAlignment="Center" />
+                        </StackPanel>
+                        <Grid Margin="0,0,0,4">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="90" />
+                                <ColumnDefinition Width="*" />
+                            </Grid.ColumnDefinitions>
+                            <Grid.RowDefinitions>
+                                <RowDefinition /><RowDefinition /><RowDefinition /><RowDefinition />
+                            </Grid.RowDefinitions>
+                            <TextBlock Grid.Row="0" Grid.Column="0" Text="Manufacturer" Style="{StaticResource BodyText}" Foreground="{StaticResource TextSecondaryBrush}" Margin="0,0,0,3" />
+                            <TextBlock Grid.Row="0" Grid.Column="1" Text="{Binding SelectedDevice.Manufacturer}" Style="{StaticResource BodyText}" TextTrimming="CharacterEllipsis" Margin="0,0,0,3" />
+                            <TextBlock Grid.Row="1" Grid.Column="0" Text="Model" Style="{StaticResource BodyText}" Foreground="{StaticResource TextSecondaryBrush}" Margin="0,0,0,3" />
+                            <TextBlock Grid.Row="1" Grid.Column="1" Text="{Binding SelectedDevice.Model}" Style="{StaticResource BodyText}" TextTrimming="CharacterEllipsis" Margin="0,0,0,3" />
+                            <TextBlock Grid.Row="2" Grid.Column="0" Text="Product ID" Style="{StaticResource BodyText}" Foreground="{StaticResource TextSecondaryBrush}" Margin="0,0,0,3" />
+                            <TextBlock Grid.Row="2" Grid.Column="1" Text="{Binding SelectedDevice.ProductId}" Style="{StaticResource BodyText}" TextTrimming="CharacterEllipsis" Margin="0,0,0,3" />
+                            <TextBlock Grid.Row="3" Grid.Column="0" Text="Serial" Style="{StaticResource BodyText}" Foreground="{StaticResource TextSecondaryBrush}" Margin="0,0,0,3" />
+                            <TextBlock Grid.Row="3" Grid.Column="1" Text="{Binding SelectedDevice.SerialNumber}" Style="{StaticResource BodyText}" TextTrimming="CharacterEllipsis" Margin="0,0,0,3" />
+                        </Grid>
+
+                        <Separator Margin="0,6,0,10" />
+
+                        <!-- Software -->
+                        <StackPanel Orientation="Horizontal" Margin="0,0,0,6">
+                            <materialDesign:PackIcon Kind="MicrosoftWindows" Width="16" Height="16"
+                                                     Foreground="{StaticResource TextSecondaryBrush}"
+                                                     VerticalAlignment="Center" Margin="0,0,6,0" />
+                            <TextBlock Text="SOFTWARE" Style="{StaticResource SectionLabel}"
+                                       VerticalAlignment="Center" />
+                        </StackPanel>
+                        <Grid Margin="0,0,0,4">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="90" />
+                                <ColumnDefinition Width="*" />
+                            </Grid.ColumnDefinitions>
+                            <Grid.RowDefinitions>
+                                <RowDefinition /><RowDefinition />
+                            </Grid.RowDefinitions>
+                            <TextBlock Grid.Row="0" Grid.Column="0" Text="OS" Style="{StaticResource BodyText}" Foreground="{StaticResource TextSecondaryBrush}" Margin="0,0,0,3" />
+                            <TextBlock Grid.Row="0" Grid.Column="1" Text="{Binding SelectedDevice.OsVersion}" Style="{StaticResource BodyText}" TextTrimming="CharacterEllipsis" Margin="0,0,0,3" />
+                            <TextBlock Grid.Row="1" Grid.Column="0" Text="BIOS" Style="{StaticResource BodyText}" Foreground="{StaticResource TextSecondaryBrush}" Margin="0,0,0,3" />
+                            <TextBlock Grid.Row="1" Grid.Column="1" Text="{Binding SelectedDevice.BiosVersion}" Style="{StaticResource BodyText}" TextTrimming="CharacterEllipsis" Margin="0,0,0,3" />
+                        </Grid>
+
+                        <Separator Margin="0,6,0,10" />
+
+                        <!-- Updates (read-only) -->
+                        <StackPanel Orientation="Horizontal" Margin="0,0,0,6">
+                            <materialDesign:PackIcon Kind="Download" Width="16" Height="16"
+                                                     Foreground="{StaticResource TextSecondaryBrush}"
+                                                     VerticalAlignment="Center" Margin="0,0,6,0" />
+                            <TextBlock Style="{StaticResource SectionLabel}" VerticalAlignment="Center">
+                                <Run Text="UPDATES (" /><Run Text="{Binding SelectedDeviceRecommendations.Count, Mode=OneWay}" /><Run Text=")" />
+                            </TextBlock>
+                        </StackPanel>
+                        <ItemsControl ItemsSource="{Binding SelectedDeviceRecommendations}" Margin="0,0,0,6">
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate>
+                                    <Border Background="{StaticResource SubtleBackgroundBrush}" CornerRadius="4" Padding="6,4" Margin="0,0,0,3">
+                                        <StackPanel>
+                                            <TextBlock Text="{Binding Name}" Style="{StaticResource BodyText}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" FontSize="12" />
+                                            <StackPanel Orientation="Horizontal" Margin="0,1,0,0">
+                                                <TextBlock Text="{Binding SoftPaqId}" FontSize="12" Foreground="{StaticResource TextSecondaryBrush}" />
+                                                <TextBlock Text=" | " FontSize="12" Foreground="{StaticResource TextSecondaryBrush}" />
+                                                <TextBlock Text="{Binding Category}" FontSize="12" Foreground="{StaticResource TextSecondaryBrush}" />
+                                                <TextBlock Text=" | " FontSize="12" Foreground="{StaticResource TextSecondaryBrush}" />
+                                                <TextBlock Text="{Binding Severity}" FontSize="12" Foreground="{StaticResource TextSecondaryBrush}" />
+                                            </StackPanel>
+                                        </StackPanel>
+                                    </Border>
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+                    </StackPanel>
+                </ScrollViewer>
+            </Border>
+        </Grid>
+
+        <!-- Add Hosts Panel (collapsible) -->
+        <Border Grid.Row="3" Style="{StaticResource AppCard}" Margin="0,8,0,0" Padding="14,10"
+                Visibility="{Binding ShowScanPanel, Converter={StaticResource BoolToVis}}">
+            <StackPanel>
+                <!-- Header with credential selector -->
+                <DockPanel Margin="0,0,0,10">
+                    <TextBlock Text="Add Hosts" Style="{StaticResource SectionTitle}" VerticalAlignment="Center" />
+                    <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" HorizontalAlignment="Right"
+                                VerticalAlignment="Center">
+                        <TextBlock Text="Credentials:" Style="{StaticResource CaptionText}"
+                                   VerticalAlignment="Center" Margin="0,0,6,0" />
+                        <ComboBox x:Name="CredentialComboBox"
+                                  ItemsSource="{Binding Credentials}"
+                                  SelectedItem="{Binding SelectedCredential, Mode=TwoWay}"
+                                  SelectionChanged="CredentialComboBox_SelectionChanged"
+                                  Foreground="{StaticResource TextPrimaryBrush}"
+                                  MinWidth="150" Height="28" FontSize="12" />
+                    </StackPanel>
+                </DockPanel>
+
+                <!-- Two-column layout: Single host | Network scan -->
+                <Grid>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="14" />
+                        <ColumnDefinition Width="*" />
+                    </Grid.ColumnDefinitions>
+
+                    <!-- Left: Add single host -->
+                    <StackPanel Grid.Column="0">
+                        <TextBlock Text="Add Single Device" Style="{StaticResource CaptionText}"
+                                   FontWeight="SemiBold" Margin="0,0,0,4" />
+                        <DockPanel>
+                            <Button DockPanel.Dock="Right" Content="Add" Command="{Binding AddSingleHostCommand}"
+                                    Style="{StaticResource PrimaryButton}" Height="30" Padding="14,4" Margin="6,0,0,0" />
+                            <TextBox Text="{Binding SingleHostInput, UpdateSourceTrigger=PropertyChanged}"
+                                     Foreground="White" CaretBrush="White"
+                                     Background="#12FFFFFF" BorderBrush="#33FFFFFF"
+                                     BorderThickness="1" Padding="8,0"
+                                     Height="30" FontSize="12"
+                                     VerticalContentAlignment="Center"
+                                     ToolTip="Enter a hostname or IP address" />
+                        </DockPanel>
+                        <DockPanel Margin="0,4,0,0">
+                            <ProgressBar Style="{StaticResource MaterialDesignCircularProgressBar}"
+                                         IsIndeterminate="True" Width="12" Height="12"
+                                         Foreground="{StaticResource HpBlueBrush}"
+                                         Visibility="{Binding IsAddingHost, Converter={StaticResource BoolToVis}}"
+                                         Margin="0,0,6,0" DockPanel.Dock="Left" />
+                            <TextBlock Text="{Binding SingleHostStatus}" Style="{StaticResource CaptionText}" />
+                        </DockPanel>
+                    </StackPanel>
+
+                    <!-- Right: Network scan -->
+                    <StackPanel Grid.Column="2">
+                        <TextBlock Text="Scan Network Range" Style="{StaticResource CaptionText}"
+                                   FontWeight="SemiBold" Margin="0,0,0,4" />
+                        <DockPanel>
+                            <Button DockPanel.Dock="Right" Command="{Binding StartScanCommand}"
+                                    Visibility="{Binding IsScanning, Converter={StaticResource InverseBoolToVis}}"
+                                    Style="{StaticResource PrimaryButton}" Height="30" Padding="14,4" Margin="6,0,0,0">
+                                <StackPanel Orientation="Horizontal">
+                                    <materialDesign:PackIcon Kind="Magnify" Width="14" Height="14"
+                                                             VerticalAlignment="Center" Margin="0,0,4,0" />
+                                    <TextBlock Text="Scan" VerticalAlignment="Center" />
+                                </StackPanel>
+                            </Button>
+                            <Button DockPanel.Dock="Right" Content="Stop" Command="{Binding StopScanCommand}"
+                                    Visibility="{Binding IsScanning, Converter={StaticResource BoolToVis}}"
+                                    Style="{StaticResource DangerButton}" Height="30" Padding="14,4" Margin="6,0,0,0" />
+                            <ComboBox DockPanel.Dock="Right" Margin="6,0,0,0"
+                                      ItemsSource="{Binding CidrPrefixes}"
+                                      SelectedItem="{Binding SelectedCidrPrefix}"
+                                      MinWidth="70" Height="28" FontSize="12" />
+                            <TextBox Text="{Binding NetworkIp, UpdateSourceTrigger=PropertyChanged}"
+                                     Foreground="White" CaretBrush="White"
+                                     Background="#12FFFFFF" BorderBrush="#33FFFFFF"
+                                     BorderThickness="1" Padding="8,0"
+                                     Height="30" FontSize="12"
+                                     VerticalContentAlignment="Center"
+                                     ToolTip="e.g. 192.168.1.0" />
+                        </DockPanel>
+                    </StackPanel>
+                </Grid>
+
+                <!-- Scan Progress -->
+                <Border Margin="0,8,0,0"
+                        Visibility="{Binding IsScanning, Converter={StaticResource BoolToVis}}">
+                    <StackPanel>
+                        <DockPanel Margin="0,0,0,3">
+                            <TextBlock Text="{Binding ScanStatus}" Style="{StaticResource CaptionText}" />
+                            <TextBlock DockPanel.Dock="Right" HorizontalAlignment="Right"
+                                       Style="{StaticResource CaptionText}" Foreground="{StaticResource HpBlueBrush}"
+                                       FontWeight="SemiBold">
+                                <Run Text="{Binding ProgressPercent, StringFormat='{}{0:F1}%'}" />
+                            </TextBlock>
+                        </DockPanel>
+                        <ProgressBar Value="{Binding ProgressPercent}" Maximum="100" Height="4"
+                                     Foreground="{StaticResource HpBlueBrush}"
+                                     Background="{StaticResource ProgressBarTrackBrush}" />
+                        <StackPanel Orientation="Horizontal" Margin="0,6,0,0">
+                            <TextBlock Style="{StaticResource CaptionText}" Margin="0,0,16,0">
+                                <Run Text="Scanned: " /><Run Text="{Binding ScannedIps}" FontWeight="Bold" />
+                                <Run Text="/" /><Run Text="{Binding TotalIps}" />
+                            </TextBlock>
+                            <TextBlock Style="{StaticResource CaptionText}" Margin="0,0,16,0">
+                                <Run Text="Alive: " /><Run Text="{Binding AliveHosts}" FontWeight="Bold" Foreground="{StaticResource AccentGreenBrush}" />
+                            </TextBlock>
+                            <TextBlock Style="{StaticResource CaptionText}" Margin="0,0,16,0">
+                                <Run Text="HP: " /><Run Text="{Binding HpDevicesFound}" FontWeight="Bold" Foreground="{StaticResource HpBlueBrush}" />
+                            </TextBlock>
+                            <TextBlock Style="{StaticResource CaptionText}">
+                                <Run Text="Errors: " /><Run Text="{Binding WmiFailures}" FontWeight="Bold" Foreground="{StaticResource AccentRedBrush}" />
+                            </TextBlock>
+                        </StackPanel>
+                    </StackPanel>
+                </Border>
+
+                <!-- Scan result (when not scanning) -->
+                <TextBlock Text="{Binding ScanStatus}" Margin="0,6,0,0"
+                           Style="{StaticResource CaptionText}"
+                           Visibility="{Binding IsScanning, Converter={StaticResource InverseBoolToVis}}" />
+            </StackPanel>
+        </Border>
+
+        <!-- Status -->
+        <StackPanel Grid.Row="4" Margin="4,8,0,0">
+            <TextBlock Text="{Binding StatusMessage}" Style="{StaticResource SubtitleText}"
+                       Foreground="{StaticResource AccentGreenBrush}" />
+        </StackPanel>
+    </Grid>
+</UserControl>

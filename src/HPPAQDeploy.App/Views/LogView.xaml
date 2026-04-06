@@ -1,0 +1,76 @@
+<UserControl x:Class="HPPAQDeploy.App.Views.LogView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:materialDesign="http://materialdesigninxaml.net/winfx/xaml/themes">
+
+    <Grid>
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+        </Grid.RowDefinitions>
+
+        <!-- Header -->
+        <DockPanel Grid.Row="0" Margin="0,0,0,16">
+            <StackPanel DockPanel.Dock="Left">
+                <TextBlock Text="Application Logs" Style="{StaticResource PageTitle}" />
+                <TextBlock Text="View application diagnostic logs" Style="{StaticResource PageSubtitle}" Margin="0,2,0,0" />
+            </StackPanel>
+            <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Center">
+                <Button Content="Open Folder" Command="{Binding OpenLogFolderCommand}"
+                        Style="{StaticResource SecondaryButton}" Margin="0,0,8,0"
+                        ToolTip="Open the log files folder in Explorer" />
+                <Button Content="Refresh" Command="{Binding RefreshCommand}"
+                        Style="{StaticResource SecondaryButton}"
+                        ToolTip="Reload the current log file" />
+            </StackPanel>
+        </DockPanel>
+
+        <!-- Log File Selector & Search -->
+        <Border Grid.Row="1" Style="{StaticResource AppCard}" Margin="0,0,0,16" Padding="12">
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+                <TextBlock Grid.Column="0" Text="Log File:" VerticalAlignment="Center" Margin="0,0,12,0"
+                           Foreground="{StaticResource TextSecondaryBrush}" />
+                <ComboBox Grid.Column="1" ItemsSource="{Binding LogFiles}"
+                          SelectedItem="{Binding SelectedLogFile}"
+                          Style="{StaticResource AppComboBox}"
+                          ToolTip="Select which log file to view" />
+                <StackPanel Grid.Column="2" Orientation="Horizontal" Margin="16,0,12,0" VerticalAlignment="Center">
+                    <materialDesign:PackIcon Kind="Magnify" Width="16" Height="16"
+                                             Foreground="{StaticResource TextSecondaryBrush}"
+                                             VerticalAlignment="Center" Margin="0,0,6,0" />
+                    <TextBlock Text="Search:" Foreground="{StaticResource TextSecondaryBrush}" VerticalAlignment="Center" />
+                </StackPanel>
+                <TextBox Grid.Column="3" Text="{Binding SearchText, UpdateSourceTrigger=PropertyChanged, Delay=300}"
+                         materialDesign:HintAssist.Hint="Filter log entries..."
+                         Style="{StaticResource AppTextBox}"
+                         ToolTip="Filter log entries by keyword" />
+                <TextBlock Grid.Column="4" VerticalAlignment="Center" Margin="12,0,0,0"
+                           FontSize="12" Foreground="{StaticResource TextSecondaryBrush}">
+                    <Run Text="{Binding LogEntries.Count, Mode=OneWay}" />
+                    <Run Text=" / " />
+                    <Run Text="{Binding TotalLines, Mode=OneWay}" />
+                    <Run Text=" lines" />
+                </TextBlock>
+            </Grid>
+        </Border>
+
+        <!-- Log Content -->
+        <Border Grid.Row="2" Style="{StaticResource AppCard}">
+            <ListBox ItemsSource="{Binding LogEntries}"
+                     Background="Transparent" BorderThickness="0"
+                     FontFamily="Consolas" FontSize="12"
+                     Foreground="{StaticResource TextPrimaryBrush}"
+                     VirtualizingStackPanel.IsVirtualizing="True"
+                     VirtualizingStackPanel.VirtualizationMode="Recycling"
+                     ScrollViewer.HorizontalScrollBarVisibility="Auto" />
+        </Border>
+    </Grid>
+</UserControl>

@@ -1,0 +1,273 @@
+<UserControl x:Class="HPPAQDeploy.App.Views.AboutView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:materialDesign="http://materialdesigninxaml.net/winfx/xaml/themes"
+             TextElement.FontSize="14">
+
+    <ScrollViewer VerticalScrollBarVisibility="Auto">
+        <StackPanel Margin="0,0,16,0">
+            <TextBlock Text="About" Style="{StaticResource PageTitle}" FontSize="22" />
+
+            <!-- App Identity -->
+            <Border Style="{StaticResource AppCard}" Margin="0,0,0,12">
+                <StackPanel>
+                    <StackPanel Orientation="Horizontal" Margin="0,0,0,14">
+                        <materialDesign:PackIcon Kind="MonitorDashboard" Width="40" Height="40"
+                                                 Foreground="{StaticResource HpBlueBrush}"
+                                                 VerticalAlignment="Center" Margin="0,0,14,0" />
+                        <StackPanel VerticalAlignment="Center">
+                            <TextBlock Text="{Binding AppName}" FontSize="24" FontWeight="Bold"
+                                       Foreground="{StaticResource TextPrimaryBrush}" />
+                            <TextBlock Style="{StaticResource CaptionText}">
+                                <Run Text="Version " />
+                                <Run Text="{Binding Version, Mode=OneWay}" FontWeight="SemiBold"
+                                     Foreground="{StaticResource HpBlueBrush}" />
+                                <Run Text="  |  HPIA " />
+                                <Run Text="{Binding HpiaVersion, Mode=OneWay}" />
+                                <Run Text="  |  " />
+                                <Run Text="{Binding Runtime, Mode=OneWay}" />
+                            </TextBlock>
+                        </StackPanel>
+                    </StackPanel>
+
+                    <TextBlock Text="{Binding Description}" Style="{StaticResource BodyText}"
+                               TextWrapping="Wrap" Margin="0,0,0,12" />
+
+                    <StackPanel Orientation="Horizontal">
+                        <Button Command="{Binding OpenGitHubCommand}"
+                                Style="{StaticResource PrimaryButton}"
+                                Height="30" Padding="14,4" Margin="0,0,8,0">
+                            <StackPanel Orientation="Horizontal">
+                                <materialDesign:PackIcon Kind="Github" Width="16" Height="16"
+                                                         VerticalAlignment="Center" Margin="0,0,6,0" />
+                                <TextBlock Text="View on GitHub" VerticalAlignment="Center" />
+                            </StackPanel>
+                        </Button>
+                        <Button Command="{Binding OpenLogFolderCommand}"
+                                Style="{StaticResource SecondaryButton}"
+                                Height="30" Padding="14,4">
+                            <StackPanel Orientation="Horizontal">
+                                <materialDesign:PackIcon Kind="FolderOpen" Width="16" Height="16"
+                                                         VerticalAlignment="Center" Margin="0,0,6,0" />
+                                <TextBlock Text="Open Log Folder" VerticalAlignment="Center" />
+                            </StackPanel>
+                        </Button>
+                    </StackPanel>
+                </StackPanel>
+            </Border>
+
+            <!-- Features -->
+            <Border Style="{StaticResource AppCard}" Margin="0,0,0,12">
+                <StackPanel>
+                    <TextBlock Text="Features" Style="{StaticResource SectionTitle}" FontSize="16" Margin="0,0,0,8" />
+                    <TextBlock Text="{Binding Features}" Style="{StaticResource BodyText}"
+                               TextWrapping="Wrap" />
+                </StackPanel>
+            </Border>
+
+            <!-- Getting Started -->
+            <Border Style="{StaticResource AppCard}" Margin="0,0,0,12">
+                <StackPanel>
+                    <StackPanel Orientation="Horizontal" Margin="0,0,0,10">
+                        <materialDesign:PackIcon Kind="BookOpenPageVariant" Width="18" Height="18"
+                                                 Foreground="{StaticResource HpBlueBrush}"
+                                                 VerticalAlignment="Center" Margin="0,0,8,0" />
+                        <TextBlock Text="Getting Started" Style="{StaticResource SectionTitle}" VerticalAlignment="Center" />
+                    </StackPanel>
+
+                    <!-- Step 1 -->
+                    <DockPanel Margin="0,0,0,8">
+                        <Border DockPanel.Dock="Left" Width="28" Height="28" CornerRadius="14"
+                                Background="{StaticResource HpBlueBrush}" Margin="0,0,10,0" VerticalAlignment="Top">
+                            <TextBlock Text="1" Foreground="White" FontWeight="Bold" FontSize="12"
+                                       HorizontalAlignment="Center" VerticalAlignment="Center" />
+                        </Border>
+                        <StackPanel>
+                            <TextBlock Text="Add Credentials" Style="{StaticResource BodyText}" FontWeight="SemiBold" FontSize="15" />
+                            <TextBlock Style="{StaticResource BodyText}" TextWrapping="Wrap" Foreground="{StaticResource TextSecondaryBrush}">
+                                Go to the Credentials tab and add a domain admin account. This is used for WMI device discovery and SMB file transfer. Passwords are encrypted with Windows DPAPI.
+                            </TextBlock>
+                        </StackPanel>
+                    </DockPanel>
+
+                    <!-- Step 2 -->
+                    <DockPanel Margin="0,0,0,8">
+                        <Border DockPanel.Dock="Left" Width="28" Height="28" CornerRadius="14"
+                                Background="{StaticResource HpBlueBrush}" Margin="0,0,10,0" VerticalAlignment="Top">
+                            <TextBlock Text="2" Foreground="White" FontWeight="Bold" FontSize="12"
+                                       HorizontalAlignment="Center" VerticalAlignment="Center" />
+                        </Border>
+                        <StackPanel>
+                            <TextBlock Text="Configure BIOS Passwords (Optional)" Style="{StaticResource BodyText}" FontWeight="SemiBold" FontSize="15" />
+                            <TextBlock Style="{StaticResource BodyText}" TextWrapping="Wrap" Foreground="{StaticResource TextSecondaryBrush}">
+                                If your HP devices have BIOS setup passwords, add them in Settings > BIOS Passwords. HPIA will try each password in order when deploying BIOS updates.
+                            </TextBlock>
+                        </StackPanel>
+                    </DockPanel>
+
+                    <!-- Step 3 -->
+                    <DockPanel Margin="0,0,0,8">
+                        <Border DockPanel.Dock="Left" Width="28" Height="28" CornerRadius="14"
+                                Background="{StaticResource HpBlueBrush}" Margin="0,0,10,0" VerticalAlignment="Top">
+                            <TextBlock Text="3" Foreground="White" FontWeight="Bold" FontSize="12"
+                                       HorizontalAlignment="Center" VerticalAlignment="Center" />
+                        </Border>
+                        <StackPanel>
+                            <TextBlock Text="Discover Devices" Style="{StaticResource BodyText}" FontWeight="SemiBold" FontSize="15" />
+                            <TextBlock Style="{StaticResource BodyText}" TextWrapping="Wrap" Foreground="{StaticResource TextSecondaryBrush}">
+                                Go to Devices > Add Hosts. Enter a network IP and CIDR range (e.g. 10.0.1.0 /24) and click Scan. The app will ping sweep the range, then use WMI to identify HP devices. You can also add individual devices by hostname or IP.
+                            </TextBlock>
+                        </StackPanel>
+                    </DockPanel>
+
+                    <!-- Step 4 -->
+                    <DockPanel Margin="0,0,0,8">
+                        <Border DockPanel.Dock="Left" Width="28" Height="28" CornerRadius="14"
+                                Background="{StaticResource HpBlueBrush}" Margin="0,0,10,0" VerticalAlignment="Top">
+                            <TextBlock Text="4" Foreground="White" FontWeight="Bold" FontSize="12"
+                                       HorizontalAlignment="Center" VerticalAlignment="Center" />
+                        </Border>
+                        <StackPanel>
+                            <TextBlock Text="Create Groups" Style="{StaticResource BodyText}" FontWeight="SemiBold" FontSize="15" />
+                            <TextBlock Style="{StaticResource BodyText}" TextWrapping="Wrap" Foreground="{StaticResource TextSecondaryBrush}">
+                                Go to Groups and create a group (e.g. "Floor 2 Workstations"). Add devices to the group individually, by model (e.g. all HP ProBook 450 G7), or add all ungrouped devices at once.
+                            </TextBlock>
+                        </StackPanel>
+                    </DockPanel>
+
+                    <!-- Step 5 -->
+                    <DockPanel Margin="0,0,0,8">
+                        <Border DockPanel.Dock="Left" Width="28" Height="28" CornerRadius="14"
+                                Background="{StaticResource HpBlueBrush}" Margin="0,0,10,0" VerticalAlignment="Top">
+                            <TextBlock Text="5" Foreground="White" FontWeight="Bold" FontSize="12"
+                                       HorizontalAlignment="Center" VerticalAlignment="Center" />
+                        </Border>
+                        <StackPanel>
+                            <TextBlock Text="Scan for Updates" Style="{StaticResource BodyText}" FontWeight="SemiBold" FontSize="15" />
+                            <TextBlock Style="{StaticResource BodyText}" TextWrapping="Wrap" Foreground="{StaticResource TextSecondaryBrush}">
+                                Go to Deploy Updates, select your group, and click "Scan Group". HPIA will be staged to each device and run an analysis to find missing drivers, BIOS, and firmware updates. This runs silently in the background.
+                            </TextBlock>
+                        </StackPanel>
+                    </DockPanel>
+
+                    <!-- Step 6 -->
+                    <DockPanel Margin="0,0,0,8">
+                        <Border DockPanel.Dock="Left" Width="28" Height="28" CornerRadius="14"
+                                Background="{StaticResource AccentGreenBrush}" Margin="0,0,10,0" VerticalAlignment="Top">
+                            <TextBlock Text="6" Foreground="White" FontWeight="Bold" FontSize="12"
+                                       HorizontalAlignment="Center" VerticalAlignment="Center" />
+                        </Border>
+                        <StackPanel>
+                            <TextBlock Text="Deploy Updates" Style="{StaticResource BodyText}" FontWeight="SemiBold" FontSize="15" />
+                            <TextBlock Style="{StaticResource BodyText}" TextWrapping="Wrap" Foreground="{StaticResource TextSecondaryBrush}">
+                                After scanning, click a device to see its available updates. Use the checkboxes to select specific updates, or leave all checked. Click "Install on Selected" for one device, or "Install All Updates" for the entire group. Some updates may require a reboot — use the reboot controls to restart devices remotely.
+                            </TextBlock>
+                        </StackPanel>
+                    </DockPanel>
+
+                    <!-- Tips -->
+                    <Border Background="{StaticResource SubtleBackgroundBrush}" CornerRadius="4" Padding="10,8" Margin="0,4,0,0">
+                        <StackPanel>
+                            <TextBlock Text="Tips" Style="{StaticResource BodyText}" FontWeight="SemiBold" Margin="0,0,0,4" />
+                            <TextBlock Style="{StaticResource BodyText}" TextWrapping="Wrap" Foreground="{StaticResource TextSecondaryBrush}">
+                                • Updates marked "Manual install only" require user interaction or a connected accessory — HPIA will skip these during silent deployment.
+                                &#x0a;• Use the Scan Catalog feature in Settings to pre-download the HP update catalog for faster scanning.
+                                &#x0a;• Check the Deployment History tab to review past installations and track failures.
+                                &#x0a;• Set up Email Notifications in Settings to get alerts when scans complete or critical updates are found.
+                                &#x0a;• Scheduled Scans can be configured to automatically discover new devices on your network.
+                            </TextBlock>
+                        </StackPanel>
+                    </Border>
+                </StackPanel>
+            </Border>
+
+            <!-- System Info -->
+            <Border Style="{StaticResource AppCard}" Margin="0,0,0,12">
+                <StackPanel>
+                    <TextBlock Text="System Information" Style="{StaticResource SectionTitle}" FontSize="16" Margin="0,0,0,8" />
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="120" />
+                            <ColumnDefinition Width="*" />
+                        </Grid.ColumnDefinitions>
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
+                        </Grid.RowDefinitions>
+
+                        <TextBlock Grid.Row="0" Grid.Column="0" Text="Version" Style="{StaticResource CaptionText}" Margin="0,0,0,4" />
+                        <TextBlock Grid.Row="0" Grid.Column="1" Text="{Binding Version}" Style="{StaticResource BodyText}" Margin="0,0,0,4" />
+
+                        <TextBlock Grid.Row="1" Grid.Column="0" Text="HPIA Version" Style="{StaticResource CaptionText}" Margin="0,0,0,4" />
+                        <TextBlock Grid.Row="1" Grid.Column="1" Text="{Binding HpiaVersion}" Style="{StaticResource BodyText}" Margin="0,0,0,4" />
+
+                        <TextBlock Grid.Row="2" Grid.Column="0" Text="Runtime" Style="{StaticResource CaptionText}" Margin="0,0,0,4" />
+                        <TextBlock Grid.Row="2" Grid.Column="1" Text="{Binding Runtime}" Style="{StaticResource BodyText}" Margin="0,0,0,4" />
+
+                        <TextBlock Grid.Row="3" Grid.Column="0" Text="Database" Style="{StaticResource CaptionText}" Margin="0,0,0,4" />
+                        <TextBlock Grid.Row="3" Grid.Column="1" Text="{Binding DatabasePath}" Style="{StaticResource CaptionText}"
+                                   TextWrapping="Wrap" Margin="0,0,0,4" />
+
+                        <TextBlock Grid.Row="4" Grid.Column="0" Text="Log Path" Style="{StaticResource CaptionText}" Margin="0,0,0,4" />
+                        <TextBlock Grid.Row="4" Grid.Column="1" Text="{Binding LogPath}" Style="{StaticResource CaptionText}"
+                                   TextWrapping="Wrap" Margin="0,0,0,4" />
+                    </Grid>
+                </StackPanel>
+            </Border>
+
+            <!-- Keyboard Shortcuts -->
+            <Border Style="{StaticResource AppCard}" Margin="0,0,0,12">
+                <StackPanel>
+                    <TextBlock Text="Keyboard Shortcuts" Style="{StaticResource SectionTitle}" FontSize="16" Margin="0,0,0,8" />
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="100" />
+                            <ColumnDefinition Width="*" />
+                        </Grid.ColumnDefinitions>
+                        <Grid.RowDefinitions>
+                            <RowDefinition /><RowDefinition /><RowDefinition /><RowDefinition />
+                            <RowDefinition /><RowDefinition /><RowDefinition /><RowDefinition />
+                            <RowDefinition /><RowDefinition />
+                        </Grid.RowDefinitions>
+
+                        <TextBlock Grid.Row="0" Grid.Column="0" Text="Ctrl+1" Style="{StaticResource CaptionText}" FontWeight="SemiBold" Foreground="{StaticResource HpBlueBrush}" Margin="0,0,0,2" />
+                        <TextBlock Grid.Row="0" Grid.Column="1" Text="Dashboard" Style="{StaticResource BodyText}" Margin="0,0,0,2" />
+                        <TextBlock Grid.Row="1" Grid.Column="0" Text="Ctrl+2" Style="{StaticResource CaptionText}" FontWeight="SemiBold" Foreground="{StaticResource HpBlueBrush}" Margin="0,0,0,2" />
+                        <TextBlock Grid.Row="1" Grid.Column="1" Text="Devices" Style="{StaticResource BodyText}" Margin="0,0,0,2" />
+                        <TextBlock Grid.Row="2" Grid.Column="0" Text="Ctrl+3" Style="{StaticResource CaptionText}" FontWeight="SemiBold" Foreground="{StaticResource HpBlueBrush}" Margin="0,0,0,2" />
+                        <TextBlock Grid.Row="2" Grid.Column="1" Text="Groups" Style="{StaticResource BodyText}" Margin="0,0,0,2" />
+                        <TextBlock Grid.Row="3" Grid.Column="0" Text="Ctrl+4" Style="{StaticResource CaptionText}" FontWeight="SemiBold" Foreground="{StaticResource HpBlueBrush}" Margin="0,0,0,2" />
+                        <TextBlock Grid.Row="3" Grid.Column="1" Text="Deploy Updates" Style="{StaticResource BodyText}" Margin="0,0,0,2" />
+                        <TextBlock Grid.Row="4" Grid.Column="0" Text="Ctrl+5" Style="{StaticResource CaptionText}" FontWeight="SemiBold" Foreground="{StaticResource HpBlueBrush}" Margin="0,0,0,2" />
+                        <TextBlock Grid.Row="4" Grid.Column="1" Text="History" Style="{StaticResource BodyText}" Margin="0,0,0,2" />
+                        <TextBlock Grid.Row="5" Grid.Column="0" Text="Ctrl+6" Style="{StaticResource CaptionText}" FontWeight="SemiBold" Foreground="{StaticResource HpBlueBrush}" Margin="0,0,0,2" />
+                        <TextBlock Grid.Row="5" Grid.Column="1" Text="Logs" Style="{StaticResource BodyText}" Margin="0,0,0,2" />
+                        <TextBlock Grid.Row="6" Grid.Column="0" Text="Ctrl+7" Style="{StaticResource CaptionText}" FontWeight="SemiBold" Foreground="{StaticResource HpBlueBrush}" Margin="0,0,0,2" />
+                        <TextBlock Grid.Row="6" Grid.Column="1" Text="Settings" Style="{StaticResource BodyText}" Margin="0,0,0,2" />
+                        <TextBlock Grid.Row="7" Grid.Column="0" Text="Ctrl+8" Style="{StaticResource CaptionText}" FontWeight="SemiBold" Foreground="{StaticResource HpBlueBrush}" Margin="0,0,0,2" />
+                        <TextBlock Grid.Row="7" Grid.Column="1" Text="Credentials" Style="{StaticResource BodyText}" Margin="0,0,0,2" />
+                        <TextBlock Grid.Row="8" Grid.Column="0" Text="F1" Style="{StaticResource CaptionText}" FontWeight="SemiBold" Foreground="{StaticResource HpBlueBrush}" Margin="0,0,0,2" />
+                        <TextBlock Grid.Row="8" Grid.Column="1" Text="Keyboard Shortcuts" Style="{StaticResource BodyText}" Margin="0,0,0,2" />
+                        <TextBlock Grid.Row="9" Grid.Column="0" Text="F5" Style="{StaticResource CaptionText}" FontWeight="SemiBold" Foreground="{StaticResource HpBlueBrush}" Margin="0,0,0,2" />
+                        <TextBlock Grid.Row="9" Grid.Column="1" Text="Refresh Current View" Style="{StaticResource BodyText}" Margin="0,0,0,2" />
+                    </Grid>
+                </StackPanel>
+            </Border>
+
+            <!-- GitHub -->
+            <Border Style="{StaticResource AppCard}" Margin="0,0,0,12">
+                <StackPanel>
+                    <TextBlock Text="Open Source" Style="{StaticResource SectionTitle}" FontSize="16" Margin="0,0,0,8" />
+                    <TextBlock Style="{StaticResource BodyText}" TextWrapping="Wrap" Margin="0,0,0,8">
+                        HPPAQDeploy is open source. Report issues, request features, or contribute on GitHub.
+                    </TextBlock>
+                    <TextBlock Text="{Binding GitHubUrl}" Style="{StaticResource CaptionText}"
+                               Foreground="{StaticResource HpBlueBrush}" />
+                </StackPanel>
+            </Border>
+        </StackPanel>
+    </ScrollViewer>
+</UserControl>
