@@ -54,6 +54,26 @@
                         <TextBlock Text="{Binding RepoSyncStatus}" Margin="0,6,0,0"
                                    Style="{StaticResource SubtitleText}" Foreground="{StaticResource AccentOrangeBrush}"
                                    TextWrapping="Wrap" />
+
+                        <DockPanel Margin="0,14,0,12">
+                            <StackPanel>
+                                <TextBlock Text="Use Offline Repository" Foreground="{StaticResource TextSecondaryBrush}" />
+                                <TextBlock Text="Analyze and install from the synced repository instead of HP.com on each device"
+                                           FontSize="12" Foreground="{StaticResource TextSecondaryBrush}" Margin="0,2,0,0" FontStyle="Italic" />
+                            </StackPanel>
+                            <CheckBox DockPanel.Dock="Right" HorizontalAlignment="Right"
+                                      IsChecked="{Binding UseOfflineRepository}"
+                                      Style="{StaticResource MaterialDesignSwitchToggleButton}" />
+                        </DockPanel>
+
+                        <StackPanel Margin="0,0,0,4">
+                            <TextBlock Text="Repository Share Path" FontSize="12" Foreground="{StaticResource TextSecondaryBrush}" Margin="0,0,0,4" />
+                            <TextBlock Text="Optional UNC path reachable by target devices, for example \\server\share\Repository. Leave blank to copy the local repository to each target."
+                                       FontSize="12" Foreground="{StaticResource TextSecondaryBrush}" Margin="0,0,0,4" FontStyle="Italic" />
+                            <TextBox Text="{Binding RepositorySharePath, UpdateSourceTrigger=PropertyChanged}"
+                                     Style="{StaticResource MaterialDesignOutlinedTextBox}"
+                                     Foreground="{StaticResource TextPrimaryBrush}" />
+                        </StackPanel>
                     </StackPanel>
                 </Expander>
             </Border>
@@ -354,7 +374,7 @@
                         </StackPanel>
                     </Expander.Header>
                     <StackPanel Margin="0,8,0,0">
-                        <TextBlock Text="HPIA will try each configured password in order when updating BIOS on password-protected devices."
+                        <TextBlock Text="HPIA uses the first configured password when updating BIOS on password-protected devices."
                                    FontSize="12" Foreground="{StaticResource TextSecondaryBrush}" FontStyle="Italic" Margin="0,0,0,12" />
 
                         <!-- Add new password -->

@@ -16,8 +16,9 @@ public static class AppSettings
     public static string RemoteTempPath { get; set; } = @"C:\Temp\HPIA";
     public static string RepositoryPath { get; set; } = Path.Combine(AppRoot, "Repository");
     public static string RepositorySharePath { get; set; } = ""; // Optional: UNC path to shared HPIA repository for offline mode
+    public static bool UseOfflineRepository { get; set; } = false;
 
-    // BIOS passwords — HPIA will try each in order until one works (or skip if device has no BIOS password)
+    // BIOS passwords. The first configured password is passed to HPIA via /BIOSPwdEnv.
     public static IReadOnlyList<string> BiosPasswords { get; set; } = new List<string>();
 
     public static int DefaultPingConcurrency { get; set; } = 256;
@@ -113,6 +114,8 @@ public static class AppSettings
             LastScheduledScan = LastScheduledScan,
             ScheduledScanCidr = ScheduledScanCidr,
             RepositoryPath = RepositoryPath,
+            RepositorySharePath = RepositorySharePath,
+            UseOfflineRepository = UseOfflineRepository,
             EmailNotificationsEnabled = EmailNotificationsEnabled,
             SmtpServer = SmtpServer,
             SmtpPort = SmtpPort,
@@ -144,6 +147,8 @@ public static class AppSettings
             if (data == null) return;
 
             if (!string.IsNullOrEmpty(data.RepositoryPath)) RepositoryPath = data.RepositoryPath;
+            RepositorySharePath = data.RepositorySharePath ?? string.Empty;
+            UseOfflineRepository = data.UseOfflineRepository;
 
             DefaultPingConcurrency = data.DefaultPingConcurrency;
             DefaultWmiConcurrency = data.DefaultWmiConcurrency;
@@ -208,6 +213,8 @@ public static class AppSettings
         public DateTime? LastScheduledScan { get; set; }
         public string ScheduledScanCidr { get; set; } = string.Empty;
         public string RepositoryPath { get; set; } = string.Empty;
+        public string RepositorySharePath { get; set; } = string.Empty;
+        public bool UseOfflineRepository { get; set; } = false;
         public bool EmailNotificationsEnabled { get; set; } = false;
         public string SmtpServer { get; set; } = "";
         public int SmtpPort { get; set; } = 587;

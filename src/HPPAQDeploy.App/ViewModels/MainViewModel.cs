@@ -72,10 +72,10 @@ public partial class MainViewModel : ObservableObject
         _snackbarIconBrush.Freeze();
 
         SnackbarService.MessagePosted += msg =>
-            Application.Current?.Dispatcher?.BeginInvoke(() => EnqueueSnackbar(msg));
+            _ = Application.Current?.Dispatcher?.BeginInvoke(() => EnqueueSnackbar(msg));
 
         DashboardViewModel.NavigationRequested += (_, viewName) =>
-            Application.Current?.Dispatcher?.BeginInvoke(() => NavigateTo(viewName));
+            _ = Application.Current?.Dispatcher?.BeginInvoke(() => NavigateTo(viewName));
     }
 
     [RelayCommand]
@@ -262,7 +262,7 @@ public partial class MainViewModel : ObservableObject
     }
 
     // Legacy compat: existing callers that use ShowSnackbar(string)
-    public async void ShowSnackbar(string message)
+    public void ShowSnackbar(string message)
     {
         try
         {

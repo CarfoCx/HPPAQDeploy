@@ -522,7 +522,7 @@ public partial class DeployViewModel : ObservableObject
                 if (_softCancelled)
                 {
                     semaphore.Release();
-                    Application.Current.Dispatcher.BeginInvoke(() =>
+                    _ = Application.Current.Dispatcher.BeginInvoke(() =>
                     {
                         DeployedCount++;
                         ProgressPercent = TotalToDeploy > 0 ? (double)DeployedCount / TotalToDeploy * 100 : 0;
@@ -538,7 +538,7 @@ public partial class DeployViewModel : ObservableObject
 
                 try
                 {
-                    Application.Current.Dispatcher.BeginInvoke(() =>
+                    _ = Application.Current.Dispatcher.BeginInvoke(() =>
                     {
                         device.Status = DeviceStatus.Deploying;
                         AddLog(device, "Starting deployment...", "Info");
@@ -546,7 +546,7 @@ public partial class DeployViewModel : ObservableObject
 
                     var progress = new Progress<string>(msg =>
                     {
-                        Application.Current.Dispatcher.BeginInvoke(() =>
+                        _ = Application.Current.Dispatcher.BeginInvoke(() =>
                             AddLog(device, msg, "Info"));
                     });
 
@@ -564,6 +564,8 @@ public partial class DeployViewModel : ObservableObject
                     device.Recommendations = [];
                     await _deviceRepository.UpdateAsync(device);
 
+                    var rebootRequired = device.Status == DeviceStatus.RebootRequired || device.NeedsReboot;
+
                     // Record deployment history for each update
                     var historyEntries = recs.Select(r => new DeploymentHistory
                     {
@@ -575,7 +577,7 @@ public partial class DeployViewModel : ObservableObject
                         Category = r.Category ?? "",
                         Action = "Deployed",
                         Timestamp = DateTime.UtcNow,
-                        RebootRequired = false
+                        RebootRequired = rebootRequired
                     }).ToList();
 
                     try
@@ -587,7 +589,7 @@ public partial class DeployViewModel : ObservableObject
                         Log.Warning(histEx, "Failed to record deployment history for {Hostname}", device.Hostname);
                     }
 
-                    Application.Current.Dispatcher.BeginInvoke(() =>
+                    _ = Application.Current.Dispatcher.BeginInvoke(() =>
                     {
                         SuccessCount++;
                         DeployedCount++;
@@ -600,7 +602,7 @@ public partial class DeployViewModel : ObservableObject
                 }
                 catch (OperationCanceledException)
                 {
-                    Application.Current.Dispatcher.BeginInvoke(() =>
+                    _ = Application.Current.Dispatcher.BeginInvoke(() =>
                         AddLog(device, "Deployment cancelled", "Warning"));
                 }
                 catch (Exception ex)
@@ -644,7 +646,7 @@ public partial class DeployViewModel : ObservableObject
                         Log.Warning(histEx, "Failed to record deployment failure history for {Hostname}", device.Hostname);
                     }
 
-                    Application.Current.Dispatcher.BeginInvoke(() =>
+                    _ = Application.Current.Dispatcher.BeginInvoke(() =>
                     {
                         FailCount++;
                         DeployedCount++;
@@ -726,6 +728,9 @@ public partial class DeployViewModel : ObservableObject
                 AddLog(SelectedDevice, "Reboot command sent successfully (60-second countdown)", "Success");
                 DeployStatus = $"Reboot scheduled for {host} (60s countdown).";
                 SelectedDevice.NeedsReboot = false;
+                SelectedDevice.Status = DeviceStatus.Online;
+                await _deviceRepository.UpdateAsync(SelectedDevice);
+                UpdateRebootPendingCount();
                 Log.Information("Reboot command sent to {Hostname}", host);
             }
             else
@@ -777,7 +782,7 @@ public partial class DeployViewModel : ObservableObject
             var host = device.Hostname ?? device.IpAddress;
             try
             {
-                Application.Current.Dispatcher.BeginInvoke(() =>
+                _ = Application.Current.Dispatcher.BeginInvoke(() =>
                     AddLog(device, "Sending reboot command (60-second delay)...", "Warning"));
 
                 var result = await _remoteExecutor.ExecuteAsync(
@@ -792,14 +797,16 @@ public partial class DeployViewModel : ObservableObject
                 {
                     Interlocked.Increment(ref successCount);
                     device.NeedsReboot = false;
-                    Application.Current.Dispatcher.BeginInvoke(() =>
+                    device.Status = DeviceStatus.Online;
+                    await _deviceRepository.UpdateAsync(device);
+                    _ = Application.Current.Dispatcher.BeginInvoke(() =>
                         AddLog(device, "Reboot command sent successfully", "Success"));
                     Log.Information("Reboot command sent to {Hostname}", host);
                 }
                 else
                 {
                     Interlocked.Increment(ref failedCount);
-                    Application.Current.Dispatcher.BeginInvoke(() =>
+                    _ = Application.Current.Dispatcher.BeginInvoke(() =>
                         AddLog(device, $"Reboot status uncertain (exit code {result.ExitCode}): {result.ErrorOutput}", "Warning"));
                     Log.Warning("Reboot returned unexpected result for {Hostname}: {Error}", host, result.ErrorOutput);
                 }
@@ -807,7 +814,7 @@ public partial class DeployViewModel : ObservableObject
             catch (Exception ex)
             {
                 Interlocked.Increment(ref failedCount);
-                Application.Current.Dispatcher.BeginInvoke(() =>
+                _ = Application.Current.Dispatcher.BeginInvoke(() =>
                     AddLog(device, $"Reboot error: {ex.Message}", "Error"));
                 Log.Error(ex, "Failed to send reboot to {Hostname}", host);
             }
@@ -818,6 +825,7 @@ public partial class DeployViewModel : ObservableObject
         })).ToList();
 
         await Task.WhenAll(tasks);
+        UpdateRebootPendingCount();
         DeployStatus = $"Reboot commands sent. Success: {successCount} | Failed: {failedCount}";
     }
 
@@ -908,7 +916,7 @@ public partial class DeployViewModel : ObservableObject
             try
             {
                 await Task.Delay(10000);
-                Application.Current?.Dispatcher?.BeginInvoke(() =>
+                _ = Application.Current?.Dispatcher?.BeginInvoke(() =>
                 {
                     if (IsDeploying)
                     {
@@ -1025,7 +1033,7 @@ public partial class DeployViewModel : ObservableObject
                     using var deviceCts = CancellationTokenSource.CreateLinkedTokenSource(_scanCts.Token);
                     deviceCts.CancelAfter(timeoutPerDevice);
 
-                    Application.Current.Dispatcher.BeginInvoke(() =>
+                    _ = Application.Current.Dispatcher.BeginInvoke(() =>
                     {
                         device.Status = DeviceStatus.Analyzing;
                         ScanStatus = $"[{ScannedCount + 1}/{TotalToScan}] Copying HPIA files to {device.Hostname}...";
@@ -1034,14 +1042,14 @@ public partial class DeployViewModel : ObservableObject
 
                     await _hpiaManager.StageToRemoteAsync(device.Hostname, networkCred, deviceCts.Token);
 
-                    Application.Current.Dispatcher.BeginInvoke(() =>
+                    _ = Application.Current.Dispatcher.BeginInvoke(() =>
                     {
                         ScanStatus = $"[{ScannedCount + 1}/{TotalToScan}] Analyzing {device.Hostname} for missing updates...";
                         AddScanLog(device.Hostname, "Running HPIA analysis...", "Info");
                     });
 
                     var scanProgress = new Progress<string>(msg =>
-                        Application.Current.Dispatcher.BeginInvoke(() =>
+                        _ = Application.Current.Dispatcher.BeginInvoke(() =>
                             ScanStatus = $"[{ScannedCount + 1}/{TotalToScan}] {msg}"));
 
                     var recommendations = await _hpiaManager.RunAnalysisAsync(device, networkCred, deviceCts.Token, scanProgress);
@@ -1054,7 +1062,7 @@ public partial class DeployViewModel : ObservableObject
                         : DeviceStatus.Online; // No updates needed = fully up to date
                     await _deviceRepository.UpdateAsync(device);
 
-                    Application.Current.Dispatcher.BeginInvoke(() =>
+                    _ = Application.Current.Dispatcher.BeginInvoke(() =>
                     {
                         ScannedCount++;
                         ScanProgress = TotalToScan > 0 ? (double)ScannedCount / TotalToScan * 100 : 0;
@@ -1070,7 +1078,7 @@ public partial class DeployViewModel : ObservableObject
                 {
                     device.Status = DeviceStatus.Failed;
                     Log.Warning("Scan timed out for {Hostname}", device.Hostname);
-                    Application.Current.Dispatcher.BeginInvoke(() =>
+                    _ = Application.Current.Dispatcher.BeginInvoke(() =>
                     {
                         ScannedCount++;
                         ScanProgress = TotalToScan > 0 ? (double)ScannedCount / TotalToScan * 100 : 0;
@@ -1082,7 +1090,7 @@ public partial class DeployViewModel : ObservableObject
                 {
                     device.Status = DeviceStatus.Failed;
                     Log.Error(ex, "Scan failed for {Hostname}", device.Hostname);
-                    Application.Current.Dispatcher.BeginInvoke(() =>
+                    _ = Application.Current.Dispatcher.BeginInvoke(() =>
                     {
                         ScannedCount++;
                         ScanProgress = TotalToScan > 0 ? (double)ScannedCount / TotalToScan * 100 : 0;
@@ -1253,7 +1261,7 @@ public partial class DeployViewModel : ObservableObject
                     using var deviceCts = CancellationTokenSource.CreateLinkedTokenSource(_scanCts.Token);
                     deviceCts.CancelAfter(timeoutPerDevice);
 
-                    Application.Current.Dispatcher.BeginInvoke(() =>
+                    _ = Application.Current.Dispatcher.BeginInvoke(() =>
                     {
                         device.Status = DeviceStatus.Analyzing;
                         ScanStatus = $"[Retry {ScannedCount + 1}/{TotalToScan}] Scanning {device.Hostname}...";
@@ -1263,7 +1271,7 @@ public partial class DeployViewModel : ObservableObject
                     await _hpiaManager.StageToRemoteAsync(device.Hostname, networkCred, deviceCts.Token);
 
                     var scanProgress = new Progress<string>(msg =>
-                        Application.Current.Dispatcher.BeginInvoke(() =>
+                        _ = Application.Current.Dispatcher.BeginInvoke(() =>
                             ScanStatus = $"[Retry {ScannedCount + 1}/{TotalToScan}] {msg}"));
 
                     var recommendations = await _hpiaManager.RunAnalysisAsync(device, networkCred, deviceCts.Token, scanProgress);
@@ -1274,7 +1282,7 @@ public partial class DeployViewModel : ObservableObject
                     device.Status = recommendations.Count > 0 ? DeviceStatus.ReadyToDeploy : DeviceStatus.Online;
                     await _deviceRepository.UpdateAsync(device);
 
-                    Application.Current.Dispatcher.BeginInvoke(() =>
+                    _ = Application.Current.Dispatcher.BeginInvoke(() =>
                     {
                         ScannedCount++;
                         ScanProgress = TotalToScan > 0 ? (double)ScannedCount / TotalToScan * 100 : 0;
@@ -1286,7 +1294,7 @@ public partial class DeployViewModel : ObservableObject
                 catch (OperationCanceledException) when (!_scanCts.IsCancellationRequested)
                 {
                     device.Status = DeviceStatus.Failed;
-                    Application.Current.Dispatcher.BeginInvoke(() =>
+                    _ = Application.Current.Dispatcher.BeginInvoke(() =>
                     {
                         ScannedCount++;
                         ScanProgress = TotalToScan > 0 ? (double)ScannedCount / TotalToScan * 100 : 0;
@@ -1296,7 +1304,7 @@ public partial class DeployViewModel : ObservableObject
                 catch (Exception ex) when (ex is not OperationCanceledException)
                 {
                     device.Status = DeviceStatus.Failed;
-                    Application.Current.Dispatcher.BeginInvoke(() =>
+                    _ = Application.Current.Dispatcher.BeginInvoke(() =>
                     {
                         ScannedCount++;
                         ScanProgress = TotalToScan > 0 ? (double)ScannedCount / TotalToScan * 100 : 0;
@@ -1435,4 +1443,3 @@ public partial class DeployViewModel : ObservableObject
         });
     }
 }
-

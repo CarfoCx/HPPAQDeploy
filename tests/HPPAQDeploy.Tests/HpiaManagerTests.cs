@@ -34,6 +34,8 @@ public class HpiaManagerTests : IDisposable
         _tempExtractPath = Path.Combine(Path.GetTempPath(), "HPPAQTest_" + Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(_tempExtractPath);
         AppSettings.HpiaExtractPath = _tempExtractPath;
+        AppSettings.UseOfflineRepository = false;
+        AppSettings.RepositorySharePath = "";
 
         // Mock extractor to be a no-op
         _extractorMock.Setup(e => e.ExtractAsync(It.IsAny<CancellationToken>()))
@@ -44,6 +46,8 @@ public class HpiaManagerTests : IDisposable
     {
         if (Directory.Exists(_tempExtractPath))
             Directory.Delete(_tempExtractPath, true);
+        AppSettings.UseOfflineRepository = false;
+        AppSettings.RepositorySharePath = "";
     }
 
     [Fact]
@@ -92,7 +96,36 @@ public class HpiaManagerTests : IDisposable
         _remoteExecutorMock.Verify(r => r.ExecuteAsync(
             "deployhost1",
             _cred,
-            It.Is<string>(cmd => cmd.Contains("/Operation:Install")),
+            It.Is<string>(cmd => cmd.Contains("/Operation:Analyze") && cmd.Contains("/Action:Install")),
+            It.IsAny<string>(),
+            It.IsAny<TimeSpan>(),
+            It.IsAny<CancellationToken>(),
+            It.IsAny<IProgress<string>?>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task RunAnalysisAsync_UsesOfflineMode_WhenRepositoryShareConfigured()
+    {
+        AppSettings.UseOfflineRepository = true;
+        AppSettings.RepositorySharePath = @"\\server\share\Repository";
+
+        var device = new Device { Id = 1, Hostname = "offlinehost1" };
+        _remoteExecutorMock.Setup(r => r.ExecuteAsync(
+                It.IsAny<string>(),
+                It.IsAny<NetworkCredential>(),
+                It.IsAny<string>(),
+                It.IsAny<string>(),
+                It.IsAny<TimeSpan>(),
+                It.IsAny<CancellationToken>(),
+                It.IsAny<IProgress<string>?>()))
+            .ReturnsAsync(new RemoteProcessResult(0, "", ""));
+
+        await _manager.RunAnalysisAsync(device, _cred, CancellationToken.None);
+
+        _remoteExecutorMock.Verify(r => r.ExecuteAsync(
+            "offlinehost1",
+            _cred,
+            It.Is<string>(cmd => cmd.Contains(@"/Offlinemode:""\\server\share\Repository""")),
             It.IsAny<string>(),
             It.IsAny<TimeSpan>(),
             It.IsAny<CancellationToken>(),

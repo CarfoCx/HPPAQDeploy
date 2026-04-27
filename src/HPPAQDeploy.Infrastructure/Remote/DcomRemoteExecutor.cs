@@ -103,11 +103,17 @@ public class DcomRemoteExecutor : IRemoteExecutor
         // Set working directory to HPIA folder so it can find its DLLs
         batchLines.Append($"cd /d \"{remoteTempPath}\"\r\n");
 
+        if (commandLine.Contains("/BIOSPwdEnv:HPPAQDEPLOY_BIOSPWD", StringComparison.OrdinalIgnoreCase) &&
+            AppSettings.BiosPasswords.Count > 0)
+        {
+            batchLines.Append($"set \"HPPAQDEPLOY_BIOSPWD={EscapeBatchSetValue(AppSettings.BiosPasswords[0])}\"\r\n");
+        }
+
         // If the command references a UNC share for OfflineMode, map it first with user credentials
         if (!string.IsNullOrEmpty(AppSettings.RepositorySharePath) &&
             commandLine.Contains(AppSettings.RepositorySharePath, StringComparison.OrdinalIgnoreCase))
         {
-            var sharePath = AppSettings.RepositorySharePath;
+            var sharePath = GetUncShareRoot(AppSettings.RepositorySharePath);
             var domain = cred.Domain;
             var user = cred.UserName;
             var pass = cred.Password;
@@ -122,7 +128,7 @@ public class DcomRemoteExecutor : IRemoteExecutor
         if (!string.IsNullOrEmpty(AppSettings.RepositorySharePath) &&
             commandLine.Contains(AppSettings.RepositorySharePath, StringComparison.OrdinalIgnoreCase))
         {
-            batchLines.Append($"net use \"{AppSettings.RepositorySharePath}\" /delete >nul 2>&1\r\n");
+            batchLines.Append($"net use \"{GetUncShareRoot(AppSettings.RepositorySharePath)}\" /delete >nul 2>&1\r\n");
         }
 
         string batchContent = batchLines.ToString();
@@ -475,6 +481,25 @@ public class DcomRemoteExecutor : IRemoteExecutor
         }
 
         return $"\\\\{hostname}\\{remotePath}";
+    }
+
+    private static string GetUncShareRoot(string uncPath)
+    {
+        var parts = uncPath.TrimEnd('\\').Split('\\', StringSplitOptions.RemoveEmptyEntries);
+        return parts.Length >= 2
+            ? $@"\\{parts[0]}\{parts[1]}"
+            : uncPath;
+    }
+
+    private static string EscapeBatchSetValue(string value)
+    {
+        return value
+            .Replace("^", "^^")
+            .Replace("&", "^&")
+            .Replace("|", "^|")
+            .Replace("<", "^<")
+            .Replace(">", "^>")
+            .Replace("\"", "\"\"");
     }
 
     private void TryKillProcess(ManagementScope scope, uint pid)

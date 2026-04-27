@@ -17,10 +17,10 @@ hp-hpia-*.exe
 windowsdesktop-runtime-*.exe
 
 # App Data and Logs
-Logs/
-Data/
-HPIA/
-Repository/
+/Logs/
+/Data/
+/HPIA/
+/Repository/
 *.db
 *.db-shm
 *.db-wal

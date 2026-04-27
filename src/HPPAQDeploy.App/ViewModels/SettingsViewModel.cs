@@ -53,6 +53,12 @@ public partial class SettingsViewModel : ObservableObject
     [ObservableProperty]
     private string _repositoryPath = AppSettings.RepositoryPath;
 
+    [ObservableProperty]
+    private string _repositorySharePath = AppSettings.RepositorySharePath;
+
+    [ObservableProperty]
+    private bool _useOfflineRepository = AppSettings.UseOfflineRepository;
+
     public string DatabasePath => AppSettings.DatabasePath;
 
     // Scheduled scan properties
@@ -223,6 +229,8 @@ public partial class SettingsViewModel : ObservableObject
         AppSettings.ScheduledScanInterval = TimeSpan.FromHours(IntervalLabelToHours(SelectedInterval));
 
         AppSettings.RepositoryPath = RepositoryPath;
+        AppSettings.RepositorySharePath = RepositorySharePath?.Trim() ?? string.Empty;
+        AppSettings.UseOfflineRepository = UseOfflineRepository;
 
         // Save email notification settings
         AppSettings.EmailNotificationsEnabled = EmailNotificationsEnabled;
@@ -263,6 +271,8 @@ public partial class SettingsViewModel : ObservableObject
         ScheduledScanCidr = "";
         SelectedInterval = "Every 24 hours";
         RepositoryPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Repository");
+        RepositorySharePath = "";
+        UseOfflineRepository = false;
         EmailNotificationsEnabled = false;
         SmtpServer = "";
         SmtpPort = 587;
@@ -352,7 +362,7 @@ public partial class SettingsViewModel : ObservableObject
             }
 
             var progress = new Progress<string>(msg =>
-                Application.Current?.Dispatcher?.BeginInvoke(() => RepoSyncStatus = msg));
+                _ = Application.Current?.Dispatcher?.BeginInvoke(() => RepoSyncStatus = msg));
 
             var fileCount = await _repoSyncer.SyncRepositoryViaScriptFileAsync(
                 platformIds, os, osVer, progress, CancellationToken.None);
