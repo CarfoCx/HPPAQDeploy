@@ -76,6 +76,17 @@ public class BoolToVisibilityConverter : IValueConverter
         => value is System.Windows.Visibility.Visible;
 }
 
+public class StringEqualsConverter : IValueConverter
+{
+    public object Convert(object value, Type targetType, object parameter, CultureInfo culture)
+        => value is string text
+           && parameter is string expected
+           && string.Equals(text, expected, StringComparison.OrdinalIgnoreCase);
+
+    public object ConvertBack(object value, Type targetType, object parameter, CultureInfo culture)
+        => value is true && parameter is string expected ? expected : Binding.DoNothing;
+}
+
 public class InverseBoolToVisibilityConverter : IValueConverter
 {
     public object Convert(object value, Type targetType, object parameter, CultureInfo culture)

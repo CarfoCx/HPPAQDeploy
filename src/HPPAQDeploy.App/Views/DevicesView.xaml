@@ -46,6 +46,8 @@
                         ToolTip="Reload devices from database" />
                 <Button Content="Export CSV" Command="{Binding ExportCsvCommand}"
                         Style="{StaticResource SecondaryButton}" Margin="0,0,8,0" />
+                <Button Content="Export HTML" Command="{Binding ExportHtmlCommand}"
+                        Style="{StaticResource SecondaryButton}" Margin="0,0,8,0" />
                 <Button Content="Clear All" Command="{Binding ClearAllDevicesCommand}"
                         Style="{StaticResource DangerButton}"
                         ToolTip="Remove all devices from the database" />
@@ -55,6 +57,20 @@
         <!-- Filter bar -->
         <Border Grid.Row="1" Style="{StaticResource FilterBarBorder}">
             <DockPanel>
+                <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" Margin="8,0,0,0">
+                    <Button Content="Select Filtered" Command="{Binding SelectAllFilteredCommand}"
+                            Style="{StaticResource SecondaryButton}" Padding="10,3" Height="24"
+                            Margin="0,0,6,0" ToolTip="Select every visible device" />
+                    <Button Content="Clear Selection" Command="{Binding ClearSelectionCommand}"
+                            Style="{StaticResource SecondaryButton}" Padding="10,3" Height="24"
+                            Margin="0,0,6,0" ToolTip="Clear selected devices" />
+                    <Button Command="{Binding ClearFilterCommand}"
+                            Background="Transparent" BorderThickness="0" Padding="4,0"
+                            ToolTip="Clear filter">
+                        <materialDesign:PackIcon Kind="Close" Width="14" Height="14"
+                                                 Foreground="{StaticResource TextSecondaryBrush}" />
+                    </Button>
+                </StackPanel>
                 <materialDesign:PackIcon Kind="Magnify" Width="16" Height="16"
                                          Foreground="{StaticResource TextSecondaryBrush}"
                                          VerticalAlignment="Center" Margin="4,0,8,0" DockPanel.Dock="Left" />
@@ -71,6 +87,11 @@
                 <ColumnDefinition Width="Auto" />
                 <ColumnDefinition Width="*" MinWidth="280" />
             </Grid.ColumnDefinitions>
+
+            <ProgressBar IsIndeterminate="True" Height="3" VerticalAlignment="Top"
+                         Visibility="{Binding IsLoading, Converter={StaticResource BoolToVis}}"
+                         Foreground="{StaticResource HpBlueBrush}" Background="Transparent"
+                         Panel.ZIndex="10" />
 
             <!-- Empty State: No devices at all -->
             <Border Grid.Column="0" Style="{StaticResource AppCard}">
@@ -114,8 +135,11 @@
                           Style="{StaticResource ProfessionalDataGrid}"
                           VirtualizingStackPanel.IsVirtualizing="True"
                           VirtualizingStackPanel.VirtualizationMode="Recycling"
+                          EnableRowVirtualization="True"
+                          EnableColumnVirtualization="True"
                           CanUserResizeColumns="False"
                           CanUserReorderColumns="False"
+                          CanUserSortColumns="True"
                           SelectionMode="Extended">
                     <DataGrid.ContextMenu>
                         <ContextMenu>
@@ -127,6 +151,16 @@
                         </ContextMenu>
                     </DataGrid.ContextMenu>
                     <DataGrid.Columns>
+                        <DataGridTemplateColumn Header="" Width="42">
+                            <DataGridTemplateColumn.CellTemplate>
+                                <DataTemplate>
+                                    <CheckBox IsChecked="{Binding IsSelected, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                              Style="{StaticResource AppCheckBox}"
+                                              HorizontalAlignment="Center"
+                                              ToolTip="Select this device for bulk actions" />
+                                </DataTemplate>
+                            </DataGridTemplateColumn.CellTemplate>
+                        </DataGridTemplateColumn>
                         <DataGridTemplateColumn Header="Hostname" Width="SizeToCells">
                             <DataGridTemplateColumn.CellTemplate>
                                 <DataTemplate>
@@ -467,8 +501,22 @@
 
         <!-- Status -->
         <StackPanel Grid.Row="4" Margin="4,8,0,0">
-            <TextBlock Text="{Binding StatusMessage}" Style="{StaticResource SubtitleText}"
-                       Foreground="{StaticResource AccentGreenBrush}" />
+            <DockPanel>
+                <TextBlock Text="{Binding StatusMessage}" Style="{StaticResource SubtitleText}"
+                           Foreground="{StaticResource AccentGreenBrush}" />
+                <TextBlock DockPanel.Dock="Right" HorizontalAlignment="Right"
+                           Style="{StaticResource SubtitleText}"
+                           Foreground="{StaticResource TextSecondaryBrush}">
+                    <Run Text="{Binding SelectedDeviceCount, Mode=OneWay}" />
+                    <Run Text=" selected" />
+                    <Run Text=" | " />
+                    <Run Text="{Binding FilteredDevices.Count, Mode=OneWay}" />
+                    <Run Text=" visible" />
+                    <Run Text=" | " />
+                    <Run Text="{Binding Devices.Count, Mode=OneWay}" />
+                    <Run Text=" total" />
+                </TextBlock>
+            </DockPanel>
         </StackPanel>
     </Grid>
 </UserControl>

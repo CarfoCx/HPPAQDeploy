@@ -1,5 +1,6 @@
 using System.Collections.Concurrent;
 using System.Collections.ObjectModel;
+using System.ComponentModel;
 using System.Diagnostics;
 using System.IO;
 using System.Net;
@@ -34,6 +35,7 @@ public partial class DevicesViewModel : ObservableObject
     [ObservableProperty] private string _filterText = "";
     [ObservableProperty] private bool _isLoading;
     [ObservableProperty] private string _statusMessage = "";
+    [ObservableProperty] private int _selectedDeviceCount;
 
     public bool HasDevices => FilteredDevices.Count > 0;
     public bool HasAnyDevices => Devices.Count > 0;
@@ -46,6 +48,17 @@ public partial class DevicesViewModel : ObservableObject
         SelectedDeviceRecommendations = value?.Recommendations is not null
             ? new ObservableCollection<HpiaRecommendation>(value.Recommendations)
             : [];
+    }
+
+    partial void OnDevicesChanged(ObservableCollection<Device> value)
+    {
+        foreach (var device in value)
+        {
+            device.PropertyChanged -= Device_PropertyChanged;
+            device.PropertyChanged += Device_PropertyChanged;
+        }
+
+        UpdateSelectedDeviceCount();
     }
 
     // ── Scanning ──
@@ -98,6 +111,19 @@ public partial class DevicesViewModel : ObservableObject
     // ── Filtering ──
     partial void OnFilterTextChanged(string value) => ApplyFilter();
 
+    private void Device_PropertyChanged(object? sender, PropertyChangedEventArgs e)
+    {
+        if (e.PropertyName == nameof(Device.IsSelected))
+        {
+            UpdateSelectedDeviceCount();
+        }
+    }
+
+    private void UpdateSelectedDeviceCount()
+    {
+        SelectedDeviceCount = Devices.Count(d => d.IsSelected);
+    }
+
     private void ApplyFilter()
     {
         var source = Devices.AsEnumerable();
@@ -115,7 +141,7 @@ public partial class DevicesViewModel : ObservableObject
 
         // Preserve the currently selected device across collection replacement
         var previousSelection = SelectedDevice;
-        FilteredDevices = new ObservableCollection<Device>(source);
+        FilteredDevices = new ObservableCollection<Device>(source.OrderBy(d => d.Hostname));
         if (previousSelection is not null)
             SelectedDevice = FilteredDevices.FirstOrDefault(d => d.Id == previousSelection.Id);
         OnPropertyChanged(nameof(HasDevices));
@@ -138,6 +164,7 @@ public partial class DevicesViewModel : ObservableObject
         {
             Log.Error(ex, "Failed to load devices");
             StatusMessage = $"Error: {ex.Message}";
+            SnackbarService.ShowError("Failed to load devices.");
         }
         finally
         {
@@ -164,12 +191,38 @@ public partial class DevicesViewModel : ObservableObject
         catch (Exception ex)
         {
             Log.Error(ex, "Failed to load credentials");
+            SnackbarService.ShowError("Failed to load credentials.");
         }
     }
 
     // ── Scanning ──
     [RelayCommand]
     private void ToggleScanPanel() => ShowScanPanel = !ShowScanPanel;
+
+    [RelayCommand]
+    private void ClearFilter() => FilterText = "";
+
+    [RelayCommand]
+    private void SelectAllFiltered()
+    {
+        foreach (var device in FilteredDevices)
+        {
+            device.IsSelected = true;
+        }
+
+        UpdateSelectedDeviceCount();
+    }
+
+    [RelayCommand]
+    private void ClearSelection()
+    {
+        foreach (var device in Devices)
+        {
+            device.IsSelected = false;
+        }
+
+        UpdateSelectedDeviceCount();
+    }
 
     [RelayCommand]
     private async Task StartScanAsync()
@@ -194,6 +247,7 @@ public partial class DevicesViewModel : ObservableObject
         catch (Exception ex)
         {
             ScanStatus = $"Invalid CIDR: {ex.Message}";
+            SnackbarService.ShowError($"Invalid CIDR: {ex.Message}");
             return;
         }
 
@@ -248,7 +302,7 @@ public partial class DevicesViewModel : ObservableObject
                         if (device is not null)
                         {
                             device.Status = DeviceStatus.Online;
-                            device.LastScanned = DateTime.UtcNow;
+                            device.LastScanned = DateTime.Now;
                             await dbSemaphore.WaitAsync(_cts!.Token);
                             try { await _deviceRepository.UpsertAsync(device); }
                             finally { dbSemaphore.Release(); }
@@ -292,7 +346,7 @@ public partial class DevicesViewModel : ObservableObject
                     if (!string.IsNullOrEmpty(device.IpAddress) && cidr.Contains(device.IpAddress))
                     {
                         // Check if this device was found in the current scan (it would have been upserted with Online status)
-                        var wasFound = device.LastScanned > DateTime.UtcNow.AddMinutes(-5);
+                        var wasFound = device.LastScanned > DateTime.Now.AddMinutes(-5);
                         if (!wasFound)
                         {
                             device.Status = DeviceStatus.Offline;
@@ -395,7 +449,7 @@ public partial class DevicesViewModel : ObservableObject
             if (device is not null)
             {
                 device.Status = DeviceStatus.Online;
-                device.LastScanned = DateTime.UtcNow;
+                device.LastScanned = DateTime.Now;
                 await _deviceRepository.UpsertAsync(device);
                 await LoadDevicesAsync();
                 SingleHostStatus = $"Added {device.Hostname} ({device.Model})";
@@ -410,6 +464,7 @@ public partial class DevicesViewModel : ObservableObject
         {
             SingleHostStatus = $"Failed to connect: {ex.Message}";
             Log.Error(ex, "Single host add failed for {Target}", target);
+            SnackbarService.ShowError($"Failed to connect: {ex.Message}");
         }
         finally
         {
@@ -431,6 +486,9 @@ public partial class DevicesViewModel : ObservableObject
         Devices.Remove(device);
         FilteredDevices.Remove(device);
         OnPropertyChanged(nameof(HasDevices));
+        OnPropertyChanged(nameof(HasAnyDevices));
+        OnPropertyChanged(nameof(IsFilterEmpty));
+        UpdateSelectedDeviceCount();
         StatusMessage = $"Device '{device.Hostname}' deleted.";
         SnackbarService.Show($"Device '{device.Hostname}' deleted");
     }
@@ -446,6 +504,9 @@ public partial class DevicesViewModel : ObservableObject
         Devices.Clear();
         FilteredDevices.Clear();
         OnPropertyChanged(nameof(HasDevices));
+        OnPropertyChanged(nameof(HasAnyDevices));
+        OnPropertyChanged(nameof(IsFilterEmpty));
+        UpdateSelectedDeviceCount();
         StatusMessage = "All devices cleared.";
         SnackbarService.Show("All devices cleared");
     }
@@ -465,6 +526,7 @@ public partial class DevicesViewModel : ObservableObject
         catch (Exception ex)
         {
             StatusMessage = $"Export failed: {ex.Message}";
+            SnackbarService.ShowError($"Export failed: {ex.Message}");
         }
     }
 
@@ -485,6 +547,7 @@ public partial class DevicesViewModel : ObservableObject
         catch (Exception ex)
         {
             StatusMessage = $"HTML export failed: {ex.Message}";
+            SnackbarService.ShowError($"HTML export failed: {ex.Message}");
         }
     }
 
@@ -529,6 +592,7 @@ public partial class DevicesViewModel : ObservableObject
         }
 
         ApplyFilter();
+        UpdateSelectedDeviceCount();
         StatusMessage = $"Deleted {selected.Count} device(s).";
         SnackbarService.ShowSuccess($"Deleted {selected.Count} device(s)");
     }
