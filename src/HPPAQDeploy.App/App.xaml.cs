@@ -3,6 +3,7 @@ using System.Windows;
 using HPPAQDeploy.App.Services;
 using HPPAQDeploy.App.ViewModels;
 using HPPAQDeploy.Core.Interfaces;
+using HPPAQDeploy.Infrastructure.Agent;
 using HPPAQDeploy.Infrastructure.Data;
 using HPPAQDeploy.Infrastructure.Hpia;
 using HPPAQDeploy.Infrastructure.Network;
@@ -76,6 +77,8 @@ public partial class App : Application
                     services.AddSingleton<IDeviceDiscovery, WmiDeviceDiscovery>();
                     services.AddTransient<ICredentialStore, DpapiCredentialStore>();
                     services.AddSingleton<IRemoteExecutor, DcomRemoteExecutor>();
+                    services.AddSingleton<IAgentClient, AgentFileClient>();
+                    services.AddSingleton<IAgentBootstrapper, AgentBootstrapper>();
                     services.AddSingleton<IFileTransfer, SmbFileTransfer>();
                     services.AddSingleton<IHpiaManager, HpiaManager>();
                     services.AddTransient<IDeviceRepository, DeviceRepository>();

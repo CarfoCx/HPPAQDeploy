@@ -1,0 +1,19 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <RootNamespace>HPPAQDeploy.Agent</RootNamespace>
+    <AssemblyName>HPPAQDeploy.Agent</AssemblyName>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\HPPAQDeploy.Core\HPPAQDeploy.Core.csproj" />
+    <ProjectReference Include="..\HPPAQDeploy.Infrastructure\HPPAQDeploy.Infrastructure.csproj" />
+    <ProjectReference Include="..\HPPAQDeploy.Shared\HPPAQDeploy.Shared.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <PackageReference Include="Serilog" Version="3.1.1" />
+    <PackageReference Include="Serilog.Sinks.File" Version="5.0.0" />
+  </ItemGroup>
+</Project>

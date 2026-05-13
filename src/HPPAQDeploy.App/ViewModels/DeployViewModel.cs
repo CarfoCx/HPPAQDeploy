@@ -25,6 +25,8 @@ public partial class DeployViewModel : ObservableObject
     private readonly ICredentialStore _credentialStore;
     private readonly IRemoteExecutor _remoteExecutor;
     private readonly IFileTransfer _fileTransfer;
+    private readonly IAgentClient _agentClient;
+    private readonly IAgentBootstrapper _agentBootstrapper;
     private readonly IDeploymentHistoryRepository _historyRepository;
     private readonly IEmailService _emailService;
     private readonly RepositorySyncer _repoSyncer;
@@ -159,6 +161,8 @@ public partial class DeployViewModel : ObservableObject
         ICredentialStore credentialStore,
         IRemoteExecutor remoteExecutor,
         IFileTransfer fileTransfer,
+        IAgentClient agentClient,
+        IAgentBootstrapper agentBootstrapper,
         IDeploymentHistoryRepository historyRepository,
         IEmailService emailService,
         RepositorySyncer repoSyncer)
@@ -169,6 +173,8 @@ public partial class DeployViewModel : ObservableObject
         _credentialStore = credentialStore;
         _remoteExecutor = remoteExecutor;
         _fileTransfer = fileTransfer;
+        _agentClient = agentClient;
+        _agentBootstrapper = agentBootstrapper;
         _historyRepository = historyRepository;
         _emailService = emailService;
         _repoSyncer = repoSyncer;
@@ -352,6 +358,7 @@ public partial class DeployViewModel : ObservableObject
         {
             DeployStatus = $"Error loading: {ex.Message}";
             Log.Error(ex, "Failed to load deploy view data");
+            SnackbarService.ShowError($"Failed to load deploy view: {ex.Message}");
         }
     }
 
@@ -362,50 +369,52 @@ public partial class DeployViewModel : ObservableObject
         {
             var devices = await _deviceRepository.GetByGroupAsync(SelectedGroup.Name);
             GroupDevices = new ObservableCollection<Device>(devices);
+            Devices = new ObservableCollection<Device>(devices);
             DeployStatus = $"Group '{SelectedGroup.Name}' has {devices.Count} device(s). Click 'Scan Group' to check for updates.";
         }
         catch (Exception ex)
         {
             DeployStatus = $"Error loading group devices: {ex.Message}";
             Log.Error(ex, "Failed to load group devices");
+            SnackbarService.ShowError($"Failed to load group devices: {ex.Message}");
         }
     }
 
     private async Task LoadScannedDevicesAsync()
     {
         if (SelectedGroup is null) return;
-        var devicesWithRecs = (await _deviceRepository.GetByGroupAsync(SelectedGroup.Name)).ToList();
+        var scannedDevices = (await _deviceRepository.GetByGroupAsync(SelectedGroup.Name))
+            .Where(d => d.LastAnalyzed.HasValue ||
+                        d.Status == DeviceStatus.ReadyToDeploy ||
+                        d.Status == DeviceStatus.Online ||
+                        d.Status == DeviceStatus.Failed ||
+                        d.Status == DeviceStatus.RebootRequired ||
+                        d.NeedsReboot ||
+                        (d.Recommendations != null && d.Recommendations.Any()))
+            .OrderByDescending(d => d.Recommendations?.Count > 0)
+            .ThenBy(d => d.Hostname)
+            .ToList();
 
-        // For scanned results, reload with recommendations
-        var allWithRecs = (await _deviceRepository.GetAllWithRecommendationsAsync()).ToList();
-        var groupDeviceIds = devicesWithRecs.Select(d => d.Id).ToHashSet();
-        var deployable = allWithRecs.Where(d => groupDeviceIds.Contains(d.Id) && (
-            d.Status == DeviceStatus.ReadyToDeploy ||
-            d.Status == DeviceStatus.Completed ||
-            d.Status == DeviceStatus.Failed ||
-            d.Status == DeviceStatus.Deploying ||
-            d.Status == DeviceStatus.RebootRequired ||
-            d.NeedsReboot ||
-            (d.Recommendations != null && d.Recommendations.Any()))).ToList();
-
-        Devices = new ObservableCollection<Device>(deployable);
+        Devices = new ObservableCollection<Device>(scannedDevices);
         SelectedDevice = null;
 
-        TotalPendingUpdates = deployable
+        TotalPendingUpdates = scannedDevices
             .SelectMany(d => d.Recommendations ?? new List<HpiaRecommendation>())
             .Count();
 
-        SelectedUpdateCount = deployable
+        SelectedUpdateCount = scannedDevices
             .SelectMany(d => d.Recommendations ?? new List<HpiaRecommendation>())
             .Count(r => r.Selected);
 
-        RebootPendingCount = deployable.Count(d =>
+        RebootPendingCount = scannedDevices.Count(d =>
             d.NeedsReboot || d.Status == DeviceStatus.RebootRequired);
 
         if (Devices.Count == 0)
-            DeployStatus = $"All devices in '{SelectedGroup.Name}' are up to date. No updates needed.";
+            DeployStatus = $"No scanned devices found for '{SelectedGroup.Name}'.";
+        else if (TotalPendingUpdates == 0)
+            DeployStatus = $"All {Devices.Count} scanned device(s) in '{SelectedGroup.Name}' are up to date. No updates needed.";
         else
-            DeployStatus = $"{Devices.Count} devices with {TotalPendingUpdates} updates ready to deploy.";
+            DeployStatus = $"{Devices.Count} scanned device(s), {TotalPendingUpdates} update(s) ready to deploy.";
     }
 
     [RelayCommand]
@@ -576,7 +585,7 @@ public partial class DeployViewModel : ObservableObject
                         SoftPaqId = r.SoftPaqId ?? "",
                         Category = r.Category ?? "",
                         Action = "Deployed",
-                        Timestamp = DateTime.UtcNow,
+                        Timestamp = DateTime.Now,
                         RebootRequired = rebootRequired
                     }).ToList();
 
@@ -633,7 +642,7 @@ public partial class DeployViewModel : ObservableObject
                         Category = r.Category ?? "",
                         Action = "Failed",
                         ErrorMessage = ex.Message,
-                        Timestamp = DateTime.UtcNow,
+                        Timestamp = DateTime.Now,
                         RebootRequired = false
                     }).ToList();
 
@@ -745,6 +754,7 @@ public partial class DeployViewModel : ObservableObject
             AddLog(SelectedDevice, $"Reboot error: {ex.Message}", "Error");
             DeployStatus = $"Reboot failed for {host}: {ex.Message}";
             Log.Error(ex, "Failed to send reboot to {Hostname}", host);
+            SnackbarService.ShowError($"Reboot failed: {ex.Message}");
         }
     }
 
@@ -876,6 +886,7 @@ public partial class DeployViewModel : ObservableObject
             AddLog(SelectedDevice, $"Cancel reboot error: {ex.Message}", "Error");
             DeployStatus = $"Cancel reboot failed for {host}: {ex.Message}";
             Log.Error(ex, "Failed to cancel reboot for {Hostname}", host);
+            SnackbarService.ShowError($"Cancel reboot failed: {ex.Message}");
         }
     }
 
@@ -1001,15 +1012,23 @@ public partial class DeployViewModel : ObservableObject
         ScanProgress = 0;
         HasScannedGroup = false;
         ScanLog.Clear();
+        DeploymentLog.Clear();
+
+        var devicesToCheck = GroupDevices.ToList();
+        Devices = new ObservableCollection<Device>(devicesToCheck);
+        DeployStatus = "Resetting previous scan results...";
+        ScanStatus = "Clearing previous update results before scanning...";
+        AddScanLog("System", "Clearing previous scan results for this group", "Info");
+        await ResetScanResultsAsync(devicesToCheck, _scanCts.Token);
+
         AddScanLog("System", $"Starting scan of {GroupDevices.Count} device(s) in group '{SelectedGroup.Name}'", "Info");
         SnackbarService.Show($"Scanning {GroupDevices.Count} devices...");
 
-        var devicesToCheck = GroupDevices.ToList();
         var networkCred = await _credentialStore.DecryptAsync(SelectedCredential);
 
         try
         {
-            ScanStatus = "Preparing HPIA...";
+            ScanStatus = "Preparing local HPIA package for endpoint agents...";
             try
             {
                 await Task.Run(async () => await _hpiaManager.ExtractLocallyAsync(_scanCts.Token), _scanCts.Token);
@@ -1030,72 +1049,55 @@ public partial class DeployViewModel : ObservableObject
                 await semaphore.WaitAsync(_scanCts.Token);
                 try
                 {
+                    var target = GetDeviceTarget(device);
                     using var deviceCts = CancellationTokenSource.CreateLinkedTokenSource(_scanCts.Token);
                     deviceCts.CancelAfter(timeoutPerDevice);
 
-                    _ = Application.Current.Dispatcher.BeginInvoke(() =>
-                    {
-                        device.Status = DeviceStatus.Analyzing;
-                        ScanStatus = $"[{ScannedCount + 1}/{TotalToScan}] Copying HPIA files to {device.Hostname}...";
-                        AddScanLog(device.Hostname, "Staging HPIA files to remote device...", "Info");
-                    });
-
-                    await _hpiaManager.StageToRemoteAsync(device.Hostname, networkCred, deviceCts.Token);
-
-                    _ = Application.Current.Dispatcher.BeginInvoke(() =>
-                    {
-                        ScanStatus = $"[{ScannedCount + 1}/{TotalToScan}] Analyzing {device.Hostname} for missing updates...";
-                        AddScanLog(device.Hostname, "Running HPIA analysis...", "Info");
-                    });
-
-                    var scanProgress = new Progress<string>(msg =>
-                        _ = Application.Current.Dispatcher.BeginInvoke(() =>
-                            ScanStatus = $"[{ScannedCount + 1}/{TotalToScan}] {msg}"));
-
-                    var recommendations = await _hpiaManager.RunAnalysisAsync(device, networkCred, deviceCts.Token, scanProgress);
-
-                    device.LastAnalyzed = DateTime.UtcNow;
-                    device.NeedsReboot = false; // Clear reboot flag on fresh scan
-                    device.Recommendations = recommendations.ToList();
-                    device.Status = recommendations.Count > 0
-                        ? DeviceStatus.ReadyToDeploy
-                        : DeviceStatus.Online; // No updates needed = fully up to date
-                    await _deviceRepository.UpdateAsync(device);
+                    var recommendations = await ExecuteAgentScanAsync(
+                        device,
+                        target,
+                        networkCred,
+                        $"[{ScannedCount + 1}/{TotalToScan}]",
+                        deviceCts.Token);
 
                     _ = Application.Current.Dispatcher.BeginInvoke(() =>
                     {
                         ScannedCount++;
                         ScanProgress = TotalToScan > 0 ? (double)ScannedCount / TotalToScan * 100 : 0;
                         var updateCount = recommendations?.Count ?? 0;
-                        ScanStatus = $"Scanned {ScannedCount}/{TotalToScan} — {device.Hostname}: {updateCount} update(s) found";
-                        AddScanLog(device.Hostname, $"Scan complete — {updateCount} update(s) found", updateCount > 0 ? "Warning" : "Success");
+                        ScanStatus = $"Scanned {ScannedCount}/{TotalToScan} - {target}: {updateCount} update(s) found";
+                        AddScanLog(target, $"Scan complete - {updateCount} update(s) found", updateCount > 0 ? "Warning" : "Success");
                     });
 
                     Log.Information("Scan complete for {Hostname}: {Count} updates",
-                        device.Hostname, recommendations?.Count ?? 0);
+                        target, recommendations?.Count ?? 0);
                 }
                 catch (OperationCanceledException) when (!_scanCts.IsCancellationRequested)
                 {
+                    var target = GetDeviceTarget(device);
                     device.Status = DeviceStatus.Failed;
-                    Log.Warning("Scan timed out for {Hostname}", device.Hostname);
+                    await _deviceRepository.UpdateAsync(device);
+                    Log.Warning("Scan timed out for {Hostname}", target);
                     _ = Application.Current.Dispatcher.BeginInvoke(() =>
                     {
                         ScannedCount++;
                         ScanProgress = TotalToScan > 0 ? (double)ScannedCount / TotalToScan * 100 : 0;
-                        ScanStatus = $"Scanned {ScannedCount}/{TotalToScan} (timed out: {device.Hostname})";
-                        AddScanLog(device.Hostname, "Scan timed out", "Error");
+                        ScanStatus = $"Scanned {ScannedCount}/{TotalToScan} (timed out: {target})";
+                        AddScanLog(target, "Scan timed out", "Error");
                     });
                 }
                 catch (Exception ex) when (ex is not OperationCanceledException)
                 {
+                    var target = GetDeviceTarget(device);
                     device.Status = DeviceStatus.Failed;
-                    Log.Error(ex, "Scan failed for {Hostname}", device.Hostname);
+                    await _deviceRepository.UpdateAsync(device);
+                    Log.Error(ex, "Scan failed for {Hostname}", target);
                     _ = Application.Current.Dispatcher.BeginInvoke(() =>
                     {
                         ScannedCount++;
                         ScanProgress = TotalToScan > 0 ? (double)ScannedCount / TotalToScan * 100 : 0;
-                        ScanStatus = $"Scanned {ScannedCount}/{TotalToScan} (failed: {device.Hostname})";
-                        AddScanLog(device.Hostname, $"Scan failed: {ex.Message}", "Error");
+                        ScanStatus = $"Scanned {ScannedCount}/{TotalToScan} (failed: {target})";
+                        AddScanLog(target, $"Scan failed: {ex.Message}", "Error");
                     });
                 }
                 finally
@@ -1112,9 +1114,9 @@ public partial class DeployViewModel : ObservableObject
             var totalUpdates = Devices.Sum(d => d.Recommendations?.Count ?? 0);
             AddScanLog("System", $"Scan complete. {totalUpdates} updates found across {devicesToCheck.Count} devices.", "Success");
             ScanStatus = $"Scan complete. {totalUpdates} updates found across {devicesToCheck.Count} devices.";
-            DeployStatus = Devices.Count > 0
-                ? $"{Devices.Count} devices with {totalUpdates} updates ready to deploy."
-                : $"No updates found for group '{SelectedGroup.Name}'.";
+            DeployStatus = totalUpdates > 0
+                ? $"{Devices.Count} scanned device(s), {totalUpdates} update(s) ready to deploy."
+                : $"All {Devices.Count} scanned device(s) in '{SelectedGroup.Name}' are up to date. No updates needed.";
 
             // Email notification for critical updates
             var criticalDevices = Devices
@@ -1147,6 +1149,112 @@ public partial class DeployViewModel : ObservableObject
             _scanCts?.Dispose();
             _scanCts = null;
         }
+    }
+
+    private async Task<IReadOnlyList<HpiaRecommendation>> ExecuteAgentScanAsync(
+        Device device,
+        string target,
+        NetworkCredential networkCred,
+        string statusPrefix,
+        CancellationToken ct)
+    {
+        _ = Application.Current.Dispatcher.BeginInvoke(() =>
+        {
+            device.Status = DeviceStatus.Analyzing;
+            ScanStatus = $"{statusPrefix} Preparing agent on {target}...";
+            AddScanLog(target, "Preparing HPPAQDeploy agent and local HPIA package...", "Info");
+        });
+
+        await _agentBootstrapper.BootstrapAsync(target, networkCred, ct);
+
+        _ = Application.Current.Dispatcher.BeginInvoke(() =>
+        {
+            ScanStatus = $"{statusPrefix} Submitting scan job to {target}...";
+            AddScanLog(target, "Submitted endpoint scan job", "Info");
+        });
+
+        var jobId = await _agentClient.SubmitScanAsync(target, new AgentJob { Type = AgentJobType.Scan }, ct);
+        var pollProgress = new Progress<string>(msg =>
+            _ = Application.Current.Dispatcher.BeginInvoke(() => ScanStatus = $"{statusPrefix} {msg}"));
+
+        var result = await WaitForAgentResultAsync(
+            target,
+            jobId,
+            TimeSpan.FromMinutes(AppSettings.AnalysisTimeoutMinutes),
+            ct,
+            pollProgress);
+
+        if (result.Status != AgentJobStatus.Succeeded)
+        {
+            var message = string.IsNullOrWhiteSpace(result.Message)
+                ? "Endpoint agent scan failed without a message."
+                : result.Message;
+            throw new InvalidOperationException(message);
+        }
+
+        var recommendations = result.Recommendations.ToList();
+        foreach (var recommendation in recommendations)
+        {
+            recommendation.Id = 0;
+            recommendation.DeviceId = device.Id;
+            recommendation.DeviceHostname = device.Hostname;
+        }
+
+        device.LastAnalyzed = DateTime.Now;
+        device.NeedsReboot = false;
+        device.Recommendations = recommendations;
+        device.Status = recommendations.Count > 0 ? DeviceStatus.ReadyToDeploy : DeviceStatus.Online;
+        await _deviceRepository.UpdateAsync(device, ct);
+
+        return recommendations;
+    }
+
+    private async Task<AgentJobResult> WaitForAgentResultAsync(
+        string target,
+        string jobId,
+        TimeSpan timeout,
+        CancellationToken ct,
+        IProgress<string>? progress = null)
+    {
+        var started = DateTimeOffset.UtcNow;
+        var nextProgress = TimeSpan.Zero;
+
+        while (DateTimeOffset.UtcNow - started < timeout)
+        {
+            ct.ThrowIfCancellationRequested();
+
+            var result = await _agentClient.TryGetResultAsync(target, jobId, ct);
+            if (result is not null)
+                return result;
+
+            var elapsed = DateTimeOffset.UtcNow - started;
+            if (elapsed >= nextProgress)
+            {
+                progress?.Report($"Waiting for endpoint scan result from {target} ({elapsed.TotalSeconds:N0}s elapsed)...");
+                nextProgress = elapsed + TimeSpan.FromSeconds(15);
+            }
+
+            await Task.Delay(TimeSpan.FromSeconds(5), ct);
+        }
+
+        throw new TimeoutException($"Timed out waiting for endpoint scan result from {target} after {timeout.TotalMinutes:N0} minute(s).");
+    }
+
+    private async Task ResetScanResultsAsync(IReadOnlyList<Device> devices, CancellationToken ct)
+    {
+        foreach (var device in devices)
+        {
+            ct.ThrowIfCancellationRequested();
+            device.Recommendations = new List<HpiaRecommendation>();
+            device.LastAnalyzed = null;
+            device.NeedsReboot = false;
+            device.Status = DeviceStatus.Discovered;
+            await _deviceRepository.UpdateAsync(device, ct);
+        }
+
+        TotalPendingUpdates = 0;
+        SelectedUpdateCount = 0;
+        UpdateRebootPendingCount();
     }
 
     [RelayCommand]
@@ -1239,6 +1347,7 @@ public partial class DeployViewModel : ObservableObject
         TotalToScan = failedDevices.Count;
         ScanProgress = 0;
         ScanLog.Clear();
+        DeploymentLog.Clear();
         AddScanLog("System", $"Retrying scan for {failedDevices.Count} failed device(s)", "Info");
         SnackbarService.ShowWarning($"Retrying {failedDevices.Count} failed devices...");
 
@@ -1246,7 +1355,7 @@ public partial class DeployViewModel : ObservableObject
 
         try
         {
-            ScanStatus = "Preparing HPIA...";
+            ScanStatus = "Preparing local HPIA package for endpoint agents...";
             await Task.Run(async () => await _hpiaManager.ExtractLocallyAsync(_scanCts.Token), _scanCts.Token);
 
             ScanStatus = $"Retrying {failedDevices.Count} failed device(s)...";
@@ -1258,59 +1367,50 @@ public partial class DeployViewModel : ObservableObject
                 await semaphore.WaitAsync(_scanCts.Token);
                 try
                 {
+                    var target = GetDeviceTarget(device);
                     using var deviceCts = CancellationTokenSource.CreateLinkedTokenSource(_scanCts.Token);
                     deviceCts.CancelAfter(timeoutPerDevice);
 
-                    _ = Application.Current.Dispatcher.BeginInvoke(() =>
-                    {
-                        device.Status = DeviceStatus.Analyzing;
-                        ScanStatus = $"[Retry {ScannedCount + 1}/{TotalToScan}] Scanning {device.Hostname}...";
-                        AddScanLog(device.Hostname, "Retrying HPIA analysis...", "Info");
-                    });
-
-                    await _hpiaManager.StageToRemoteAsync(device.Hostname, networkCred, deviceCts.Token);
-
-                    var scanProgress = new Progress<string>(msg =>
-                        _ = Application.Current.Dispatcher.BeginInvoke(() =>
-                            ScanStatus = $"[Retry {ScannedCount + 1}/{TotalToScan}] {msg}"));
-
-                    var recommendations = await _hpiaManager.RunAnalysisAsync(device, networkCred, deviceCts.Token, scanProgress);
-
-                    device.LastAnalyzed = DateTime.UtcNow;
-                    device.NeedsReboot = false;
-                    device.Recommendations = recommendations.ToList();
-                    device.Status = recommendations.Count > 0 ? DeviceStatus.ReadyToDeploy : DeviceStatus.Online;
-                    await _deviceRepository.UpdateAsync(device);
+                    var recommendations = await ExecuteAgentScanAsync(
+                        device,
+                        target,
+                        networkCred,
+                        $"[Retry {ScannedCount + 1}/{TotalToScan}]",
+                        deviceCts.Token);
 
                     _ = Application.Current.Dispatcher.BeginInvoke(() =>
                     {
                         ScannedCount++;
                         ScanProgress = TotalToScan > 0 ? (double)ScannedCount / TotalToScan * 100 : 0;
-                        AddScanLog(device.Hostname, $"Retry successful — {recommendations?.Count ?? 0} update(s) found", "Success");
+                        AddScanLog(target, $"Retry successful - {recommendations?.Count ?? 0} update(s) found", "Success");
                     });
 
-                    Log.Information("Retry scan succeeded for {Hostname}: {Count} updates", device.Hostname, recommendations?.Count ?? 0);
+                    Log.Information("Retry scan succeeded for {Hostname}: {Count} updates", target, recommendations?.Count ?? 0);
                 }
                 catch (OperationCanceledException) when (!_scanCts.IsCancellationRequested)
                 {
+                    var target = GetDeviceTarget(device);
                     device.Status = DeviceStatus.Failed;
+                    await _deviceRepository.UpdateAsync(device);
                     _ = Application.Current.Dispatcher.BeginInvoke(() =>
                     {
                         ScannedCount++;
                         ScanProgress = TotalToScan > 0 ? (double)ScannedCount / TotalToScan * 100 : 0;
-                        AddScanLog(device.Hostname, "Retry timed out", "Error");
+                        AddScanLog(target, "Retry timed out", "Error");
                     });
                 }
                 catch (Exception ex) when (ex is not OperationCanceledException)
                 {
+                    var target = GetDeviceTarget(device);
                     device.Status = DeviceStatus.Failed;
+                    await _deviceRepository.UpdateAsync(device);
                     _ = Application.Current.Dispatcher.BeginInvoke(() =>
                     {
                         ScannedCount++;
                         ScanProgress = TotalToScan > 0 ? (double)ScannedCount / TotalToScan * 100 : 0;
-                        AddScanLog(device.Hostname, $"Retry failed: {ex.Message}", "Error");
+                        AddScanLog(target, $"Retry failed: {ex.Message}", "Error");
                     });
-                    Log.Error(ex, "Retry scan failed for {Hostname}", device.Hostname);
+                    Log.Error(ex, "Retry scan failed for {Hostname}", target);
                 }
                 finally
                 {
@@ -1337,6 +1437,7 @@ public partial class DeployViewModel : ObservableObject
         {
             ScanStatus = $"Retry error: {ex.Message}";
             Log.Error(ex, "Retry scan failed");
+            SnackbarService.ShowError($"Retry scan failed: {ex.Message}");
         }
         finally
         {
@@ -1361,6 +1462,17 @@ public partial class DeployViewModel : ObservableObject
         return ("Win10", "22H2");
     }
 
+    private static string GetDeviceTarget(Device device)
+    {
+        if (!string.IsNullOrWhiteSpace(device.Hostname))
+            return device.Hostname.Trim();
+
+        if (!string.IsNullOrWhiteSpace(device.IpAddress))
+            return device.IpAddress.Trim();
+
+        throw new InvalidOperationException("Device does not have a hostname or IP address.");
+    }
+
     [RelayCommand]
     private async Task ExportResultsAsync()
     {
@@ -1370,7 +1482,7 @@ public partial class DeployViewModel : ObservableObject
             return;
         }
 
-        var path = Helpers.DialogHelper.SaveFileDialog($"deployment-results-{DateTime.UtcNow:yyyyMMdd-HHmmss}.csv");
+        var path = Helpers.DialogHelper.SaveFileDialog($"deployment-results-{DateTime.Now:yyyyMMdd-HHmmss}.csv");
         if (path is null) return;
 
         try
@@ -1387,6 +1499,7 @@ public partial class DeployViewModel : ObservableObject
         catch (Exception ex)
         {
             DeployStatus = $"Export failed: {ex.Message}";
+            SnackbarService.ShowError($"Export failed: {ex.Message}");
         }
     }
 
@@ -1394,7 +1507,7 @@ public partial class DeployViewModel : ObservableObject
     private async Task ExportScanLogAsync()
     {
         if (ScanLog.Count == 0) { DeployStatus = "No scan log to export."; return; }
-        var path = Helpers.DialogHelper.SaveFileDialog($"scan-log-{DateTime.UtcNow:yyyyMMdd-HHmmss}.csv");
+        var path = Helpers.DialogHelper.SaveFileDialog($"scan-log-{DateTime.Now:yyyyMMdd-HHmmss}.csv");
         if (path is null) return;
         try
         {
@@ -1406,7 +1519,11 @@ public partial class DeployViewModel : ObservableObject
             DeployStatus = $"Scan log exported to {path}";
             SnackbarService.ShowSuccess("Scan log exported");
         }
-        catch (Exception ex) { DeployStatus = $"Export failed: {ex.Message}"; }
+        catch (Exception ex)
+        {
+            DeployStatus = $"Export failed: {ex.Message}";
+            SnackbarService.ShowError($"Export failed: {ex.Message}");
+        }
     }
 
     private void AddScanLog(string deviceName, string message, string level)
@@ -1416,16 +1533,30 @@ public partial class DeployViewModel : ObservableObject
         while (ScanLog.Count >= MaxLogEntries)
             ScanLog.RemoveAt(ScanLog.Count - 1);
 
-        ScanLog.Insert(0, new DeploymentLogEntry
+        var entry = new DeploymentLogEntry
         {
-            Timestamp = DateTime.UtcNow,
+            Timestamp = DateTime.Now,
             DeviceName = deviceName,
+            Message = message,
+            Level = level
+        };
+
+        ScanLog.Insert(0, entry);
+        AddLogEntry(entry);
+    }
+
+    private void AddLog(Device device, string message, string level)
+    {
+        AddLogEntry(new DeploymentLogEntry
+        {
+            Timestamp = DateTime.Now,
+            DeviceName = device.Hostname ?? device.IpAddress,
             Message = message,
             Level = level
         });
     }
 
-    private void AddLog(Device device, string message, string level)
+    private void AddLogEntry(DeploymentLogEntry entry)
     {
         // Insert(0) is O(n) on ObservableCollection, but necessary to display newest-first
         // without XAML-level sorting. At MaxLogEntries=1000 the cost is acceptable.
@@ -1434,12 +1565,6 @@ public partial class DeployViewModel : ObservableObject
             DeploymentLog.RemoveAt(DeploymentLog.Count - 1);
         }
 
-        DeploymentLog.Insert(0, new DeploymentLogEntry
-        {
-            Timestamp = DateTime.UtcNow,
-            DeviceName = device.Hostname ?? device.IpAddress,
-            Message = message,
-            Level = level
-        });
+        DeploymentLog.Insert(0, entry);
     }
 }
