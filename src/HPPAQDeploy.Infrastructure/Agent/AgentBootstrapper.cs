@@ -57,7 +57,7 @@ public sealed class AgentBootstrapper : IAgentBootstrapper
         var agentExe = RemoteAgentPath + @"\HPPAQDeploy.Agent.exe";
         var createTaskCommand =
             $"cmd /c schtasks /Create /TN \"{AgentTaskName}\" " +
-            $"/TR \"\\\"{agentExe}\\\" watch\" /SC ONSTART /RU SYSTEM /RL HIGHEST /F";
+            $"/TR \"{agentExe} run-once\" /SC ONSTART /RU SYSTEM /RL HIGHEST /F";
 
         await _remoteExecutor.ExecuteAsync(
             hostname,
@@ -67,6 +67,13 @@ public sealed class AgentBootstrapper : IAgentBootstrapper
             TimeSpan.FromSeconds(30),
             ct);
 
+        _logger.Information("HPPAQDeploy agent bootstrap completed on {Hostname}", hostname);
+    }
+
+    public async Task RunOnceAsync(string hostname, NetworkCredential credential, CancellationToken ct)
+    {
+        _logger.Information("Starting HPPAQDeploy agent task on {Hostname}", hostname);
+
         await _remoteExecutor.ExecuteAsync(
             hostname,
             credential,
@@ -74,8 +81,6 @@ public sealed class AgentBootstrapper : IAgentBootstrapper
             null,
             TimeSpan.FromSeconds(30),
             ct);
-
-        _logger.Information("HPPAQDeploy agent bootstrap completed on {Hostname}", hostname);
     }
 
     private static string ResolveLocalAgentPath()

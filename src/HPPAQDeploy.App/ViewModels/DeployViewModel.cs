@@ -1174,6 +1174,8 @@ public partial class DeployViewModel : ObservableObject
         });
 
         var jobId = await _agentClient.SubmitScanAsync(target, new AgentJob { Type = AgentJobType.Scan }, ct);
+        await _agentBootstrapper.RunOnceAsync(target, networkCred, ct);
+
         var pollProgress = new Progress<string>(msg =>
             _ = Application.Current.Dispatcher.BeginInvoke(() => ScanStatus = $"{statusPrefix} {msg}"));
 
