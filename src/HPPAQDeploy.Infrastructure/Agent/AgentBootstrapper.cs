@@ -10,7 +10,7 @@ public sealed class AgentBootstrapper : IAgentBootstrapper
     private const string RemoteRoot = @"C:\ProgramData\HPPAQDeploy";
     private const string RemoteAgentPath = RemoteRoot + @"\Agent";
     private const string RemoteHpiaPath = RemoteRoot + @"\HPIA";
-    private const string ServiceName = "HPPAQDeployAgent";
+    private const string AgentTaskName = "HPPAQDeployAgent";
 
     private readonly IFileTransfer _fileTransfer;
     private readonly IRemoteExecutor _remoteExecutor;
@@ -46,16 +46,23 @@ public sealed class AgentBootstrapper : IAgentBootstrapper
         await _fileTransfer.CopyToRemoteAsync(hostname, credential, localAgentPath, RemoteAgentPath, ct);
         await _fileTransfer.CopyToRemoteAsync(hostname, credential, localHpiaPath, RemoteHpiaPath, ct);
 
+        await _remoteExecutor.ExecuteAsync(
+            hostname,
+            credential,
+            $"cmd /c sc stop \"{AgentTaskName}\" >nul 2>&1 & sc delete \"{AgentTaskName}\" >nul 2>&1 & exit /b 0",
+            null,
+            TimeSpan.FromSeconds(30),
+            ct);
+
         var agentExe = RemoteAgentPath + @"\HPPAQDeploy.Agent.exe";
-        var installCommand =
-            $"cmd /c sc query \"{ServiceName}\" >nul 2>&1 " +
-            $"&& sc config \"{ServiceName}\" binPath= \"\\\"{agentExe}\\\" watch\" start= auto " +
-            $"|| sc create \"{ServiceName}\" binPath= \"\\\"{agentExe}\\\" watch\" start= auto DisplayName= \"HPPAQDeploy Agent\"";
+        var createTaskCommand =
+            $"cmd /c schtasks /Create /TN \"{AgentTaskName}\" " +
+            $"/TR \"\\\"{agentExe}\\\" watch\" /SC ONSTART /RU SYSTEM /RL HIGHEST /F";
 
         await _remoteExecutor.ExecuteAsync(
             hostname,
             credential,
-            installCommand,
+            createTaskCommand,
             null,
             TimeSpan.FromSeconds(30),
             ct);
@@ -63,7 +70,7 @@ public sealed class AgentBootstrapper : IAgentBootstrapper
         await _remoteExecutor.ExecuteAsync(
             hostname,
             credential,
-            $"cmd /c sc start \"{ServiceName}\" || sc query \"{ServiceName}\" | find /i \"RUNNING\"",
+            $"cmd /c schtasks /Run /TN \"{AgentTaskName}\"",
             null,
             TimeSpan.FromSeconds(30),
             ct);

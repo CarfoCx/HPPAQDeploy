@@ -36,6 +36,22 @@ public sealed class AgentFileClient : IAgentClient
         return await JsonSerializer.DeserializeAsync<AgentJobResult>(stream, JsonOptions, ct);
     }
 
+    public Task<string> GetJobStateAsync(string hostname, string jobId, CancellationToken ct)
+    {
+        ct.ThrowIfCancellationRequested();
+
+        if (File.Exists(Path.Combine(GetResultsUnc(hostname), $"{jobId}.json")))
+            return Task.FromResult("result ready");
+
+        if (File.Exists(Path.Combine(GetJobsUnc(hostname), $"{jobId}.running")))
+            return Task.FromResult("running");
+
+        if (File.Exists(Path.Combine(GetJobsUnc(hostname), $"{jobId}.json")))
+            return Task.FromResult("queued");
+
+        return Task.FromResult("job file not found");
+    }
+
     private async Task<string> SubmitAsync(string hostname, AgentJob job, CancellationToken ct)
     {
         if (string.IsNullOrWhiteSpace(job.Id))

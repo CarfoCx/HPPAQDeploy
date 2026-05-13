@@ -1230,7 +1230,17 @@ public partial class DeployViewModel : ObservableObject
             var elapsed = DateTimeOffset.UtcNow - started;
             if (elapsed >= nextProgress)
             {
-                progress?.Report($"Waiting for endpoint scan result from {target} ({elapsed.TotalSeconds:N0}s elapsed)...");
+                var state = await _agentClient.GetJobStateAsync(target, jobId, ct);
+                if (elapsed > TimeSpan.FromSeconds(90) &&
+                    (state.Equals("queued", StringComparison.OrdinalIgnoreCase) ||
+                     state.Equals("job file not found", StringComparison.OrdinalIgnoreCase)))
+                {
+                    throw new TimeoutException(
+                        $"Endpoint agent is not processing scan jobs on {target}. Job state is '{state}'. " +
+                        "Confirm the HPPAQDeployAgent scheduled task exists and can run as SYSTEM on the endpoint.");
+                }
+
+                progress?.Report($"Endpoint scan is {state} on {target} ({elapsed.TotalSeconds:N0}s elapsed)...");
                 nextProgress = elapsed + TimeSpan.FromSeconds(15);
             }
 

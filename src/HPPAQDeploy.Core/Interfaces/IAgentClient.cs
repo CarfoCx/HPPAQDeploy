@@ -9,4 +9,6 @@ public interface IAgentClient
     Task<string> SubmitInstallAsync(string hostname, AgentJob job, CancellationToken ct);
 
     Task<AgentJobResult?> TryGetResultAsync(string hostname, string jobId, CancellationToken ct);
+
+    Task<string> GetJobStateAsync(string hostname, string jobId, CancellationToken ct);
 }
