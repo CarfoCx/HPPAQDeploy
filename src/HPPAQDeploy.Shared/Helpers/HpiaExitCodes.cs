@@ -18,6 +18,7 @@ public static class HpiaExitCodes
         [257] = "Success - updates were applied",
         [3010] = "Success - reboot required",
         [3020] = "Success - reboot required for some updates",
+        [4104] = "Analysis complete with warnings - OS version not officially supported (using generic reference file)",
         [4096] = "Failed - general failure",
         [4097] = "Failed - invalid command line",
         [4098] = "Failed - platform not supported or HP.com unreachable",
@@ -26,7 +27,7 @@ public static class HpiaExitCodes
         [16386] = "Failed - failed to install SoftPaq",
     };
 
-    private static readonly HashSet<int> SuccessCodes = [0, 256, 257, 3010, 3020];
+    private static readonly HashSet<int> SuccessCodes = [0, 256, 257, 3010, 3020, 4104];
     private static readonly HashSet<int> RebootCodes = [3010, 3020];
 
     /// <summary>

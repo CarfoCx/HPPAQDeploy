@@ -8,6 +8,7 @@ public class CidrRange
     public IPAddress StartAddress { get; }
     public IPAddress EndAddress { get; }
     public int TotalHosts { get; }
+    public int UsableHostCount { get; }
 
     private readonly uint _networkUint;
     private readonly uint _broadcastUint;
@@ -51,6 +52,10 @@ public class CidrRange
             // /32 - single host
             TotalHosts = 1;
         }
+
+        UsableHostCount = _broadcastUint - _networkUint <= 1
+            ? TotalHosts
+            : (int)(_broadcastUint - _networkUint - 1);
     }
 
     public IEnumerable<IPAddress> GetAllHosts()

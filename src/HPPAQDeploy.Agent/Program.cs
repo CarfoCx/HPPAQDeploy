@@ -166,10 +166,12 @@ internal static class Program
         ClearDirectory(DownloadsPath);
 
         var hpiaExe = ResolveHpiaExe();
+        var offlineArg = GetOfflineModeArgument(job);
         var args =
             "/Operation:Analyze /Category:All /Selection:All /Action:List " +
             "/Silent /Noninteractive /ReportFormat:JSON " +
-            $"/ReportFolder:\"{ReportsPath}\" /Debug /LogFolder:\"{LogsPath}\"";
+            $"/ReportFolder:\"{ReportsPath}\" /Debug /LogFolder:\"{LogsPath}\"" +
+            offlineArg;
 
         var exitCode = await RunProcessAsync(hpiaExe, args, TimeSpan.FromMinutes(45));
         var recommendations = new HpiaReportParser().ParseReportDirectory(ReportsPath, 0);
@@ -205,10 +207,12 @@ internal static class Program
             .ToList();
         await File.WriteAllLinesAsync(spListPath, numericIds);
 
+        var offlineArg = GetOfflineModeArgument(job);
         var args =
             "/Operation:Analyze /Action:Install /Silent /Noninteractive " +
             $"/SoftpaqDownloadFolder:\"{DownloadsPath}\" /ReportFolder:\"{ReportsPath}\" " +
-            $"/Debug /LogFolder:\"{LogsPath}\" /SPList:\"{spListPath}\"";
+            $"/Debug /LogFolder:\"{LogsPath}\" /SPList:\"{spListPath}\"" +
+            offlineArg;
 
         var exitCode = await RunProcessAsync(hpiaExe, args, TimeSpan.FromHours(2));
         var success = HpiaExitCodes.IsSuccess(exitCode);
@@ -287,5 +291,16 @@ internal static class Program
             Directory.Delete(path, recursive: true);
 
         Directory.CreateDirectory(path);
+    }
+
+    /// <summary>
+    /// Builds the /Offlinemode argument from the job payload.
+    /// </summary>
+    private static string GetOfflineModeArgument(AgentJob job)
+    {
+        if (!job.UseOfflineRepository || string.IsNullOrWhiteSpace(job.OfflineRepositoryPath))
+            return "";
+
+        return $" /Offlinemode:\"{job.OfflineRepositoryPath.Trim()}\"";
     }
 }

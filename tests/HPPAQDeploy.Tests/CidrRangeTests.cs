@@ -9,6 +9,7 @@ public class CidrRangeTests
     {
         var cidr = new CidrRange("192.168.1.0/24");
         Assert.Equal(256, cidr.TotalHosts);
+        Assert.Equal(254, cidr.UsableHostCount);
 
         var hosts = cidr.GetAllHosts().ToList();
         // /24 skips network (.0) and broadcast (.255) = 254 usable
@@ -22,6 +23,7 @@ public class CidrRangeTests
     {
         var cidr = new CidrRange("10.0.0.5/32");
         Assert.Equal(1, cidr.TotalHosts);
+        Assert.Equal(1, cidr.UsableHostCount);
 
         var hosts = cidr.GetAllHosts().ToList();
         Assert.Single(hosts);
@@ -33,6 +35,7 @@ public class CidrRangeTests
     {
         var cidr = new CidrRange("10.0.0.4/31");
         Assert.Equal(2, cidr.TotalHosts);
+        Assert.Equal(2, cidr.UsableHostCount);
 
         var hosts = cidr.GetAllHosts().ToList();
         Assert.Equal(2, hosts.Count);

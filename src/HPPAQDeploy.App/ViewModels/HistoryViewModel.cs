@@ -4,6 +4,7 @@ using System.Text;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using HPPAQDeploy.App.Helpers;
+using HPPAQDeploy.App.Services;
 using HPPAQDeploy.Core.Interfaces;
 using HPPAQDeploy.Core.Models;
 using HPPAQDeploy.Shared.Configuration;
@@ -86,10 +87,10 @@ public partial class HistoryViewModel : ObservableObject
         {
             var cutoff = SelectedDateRange switch
             {
-                "Today" => DateTime.UtcNow.Date,
-                "Last 7 Days" => DateTime.UtcNow.AddDays(-7),
-                "Last 30 Days" => DateTime.UtcNow.AddDays(-30),
-                "Last 90 Days" => DateTime.UtcNow.AddDays(-90),
+                "Today" => DateTime.Now.Date,
+                "Last 7 Days" => DateTime.Now.AddDays(-7),
+                "Last 30 Days" => DateTime.Now.AddDays(-30),
+                "Last 90 Days" => DateTime.Now.AddDays(-90),
                 _ => DateTime.MinValue
             };
             source = source.Where(h => h.Timestamp >= cutoff);
@@ -157,6 +158,7 @@ public partial class HistoryViewModel : ObservableObject
         {
             StatusMessage = $"Error loading history: {ex.Message}";
             Log.Error(ex, "Failed to load deployment history");
+            SnackbarService.ShowError($"Failed to load history: {ex.Message}");
         }
         finally
         {
@@ -183,6 +185,8 @@ public partial class HistoryViewModel : ObservableObject
         catch (Exception ex)
         {
             StatusMessage = $"Export failed: {ex.Message}";
+            SnackbarService.ShowError($"Export failed: {ex.Message}");
+            Log.Error(ex, "Failed to export deployment history");
         }
     }
 
@@ -215,6 +219,7 @@ public partial class HistoryViewModel : ObservableObject
         {
             StatusMessage = $"Error: {ex.Message}";
             Log.Error(ex, "Failed to clear deployment history");
+            SnackbarService.ShowError($"Failed to clear history: {ex.Message}");
         }
     }
 }

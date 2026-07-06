@@ -1,6 +1,7 @@
 using System.Net;
 using HPPAQDeploy.Core.Interfaces;
 using HPPAQDeploy.Core.Models;
+using HPPAQDeploy.Infrastructure.Remote;
 using HPPAQDeploy.Shared.Configuration;
 using HPPAQDeploy.Shared.Helpers;
 using Serilog;
@@ -153,25 +154,31 @@ public class HpiaManager : IHpiaManager
         CancellationToken ct,
         IProgress<string>? progress = null)
     {
-        _logger.Information("Running HPIA analysis on {Hostname}", device.Hostname);
-        progress?.Report($"Starting HPIA analysis on {device.Hostname}...");
+        var target = RemotePathHelper.GetTarget(device);
+        _logger.Information("Running HPIA analysis on {Hostname}", target);
+        progress?.Report($"Starting HPIA analysis on {target}...");
 
         var offlineModeArg = GetOfflineModeArgument();
         var remoteLogPath = Path.Combine(RemoteHpiaPath, "HpiaLogs");
         var commandLine =
             $"\"{RemoteHpiaExe}\" /Operation:Analyze /Category:All /Selection:All " +
-            $"/Action:List /Silent /Noninteractive /ReportFolder:\"{RemoteReportsPath}\" " +
+            $"/Action:List /Silent /Noninteractive /ReportFormat:JSON /ReportFolder:\"{RemoteReportsPath}\" " +
             $"/Debug /LogFolder:\"{remoteLogPath}\"" +
             offlineModeArg;
 
         _logger.Information("Using {Mode} mode for analysis on {Hostname}",
-            AppSettings.UseOfflineRepository ? "offline repository" : "online", device.Hostname);
+            AppSettings.UseOfflineRepository ? "offline repository" : "online", target);
 
         var timeout = TimeSpan.FromMinutes(AppSettings.AnalysisTimeoutMinutes);
         var analysisStart = DateTime.UtcNow;
 
+        // Clean up stale reports/downloads from previous runs so a fresh scan does not
+        // read old output or resume against partial SoftPaq state.
+        try { await _fileTransfer.DeleteRemoteDirectoryAsync(target, credential, RemoteReportsPath, ct).ConfigureAwait(false); } catch { }
+        try { await _fileTransfer.DeleteRemoteDirectoryAsync(target, credential, RemoteDownloadsPath, ct).ConfigureAwait(false); } catch { }
+
         var result = await _remoteExecutor.ExecuteAsync(
-            device.Hostname,
+            target,
             credential,
             commandLine,
             null,
@@ -181,25 +188,25 @@ public class HpiaManager : IHpiaManager
 
         var analysisElapsed = DateTime.UtcNow - analysisStart;
         _logger.Information("HPIA analysis completed on {Hostname} with exit code {ExitCode}: {ExitMessage} (took {Elapsed:F1}s)",
-            device.Hostname, result.ExitCode, HpiaExitCodes.GetMessage(result.ExitCode), analysisElapsed.TotalSeconds);
+            target, result.ExitCode, HpiaExitCodes.GetMessage(result.ExitCode), analysisElapsed.TotalSeconds);
 
         // Non-success exit codes
         if (!HpiaExitCodes.IsSuccess(result.ExitCode))
         {
-            var msg = HpiaExitCodes.GetMessage(result.ExitCode);
-            _logger.Error("HPIA analysis failed on {Hostname}: {Message}", device.Hostname, msg);
-            throw new InvalidOperationException($"HPIA analysis failed on {device.Hostname}: {msg} (exit code {result.ExitCode})");
+            var msg = GetHpiaFailureMessage(result);
+            _logger.Error("HPIA analysis failed on {Hostname}: {Message}", target, msg);
+            throw new InvalidOperationException($"HPIA analysis failed on {target}: {msg} (exit code {result.ExitCode})");
         }
 
         if (HpiaExitCodes.RequiresReboot(result.ExitCode))
         {
             _logger.Warning("Device {Hostname} requires a reboot after analysis (exit code {ExitCode})",
-                device.Hostname, result.ExitCode);
+                target, result.ExitCode);
         }
 
         // Copy reports back locally for parsing
         var localReportPath = Path.Combine(
-            Path.GetTempPath(), "HPPAQDeploy", "Reports", device.Hostname);
+            Path.GetTempPath(), "HPPAQDeploy", "Reports", target);
 
         if (Directory.Exists(localReportPath))
             Directory.Delete(localReportPath, true);
@@ -207,43 +214,58 @@ public class HpiaManager : IHpiaManager
         Directory.CreateDirectory(localReportPath);
 
         // HPIA may not create a Reports folder if the device is fully up to date
-        var remoteReportsUnc = $"\\\\{device.Hostname}\\{RemoteReportsPath[0]}${RemoteReportsPath.Substring(2)}";
         var recommendations = new List<HpiaRecommendation>();
 
         try
         {
-            if (Directory.Exists(remoteReportsUnc))
-            {
-                await _fileTransfer.CopyFromRemoteAsync(
-                    device.Hostname,
-                    credential,
-                    RemoteReportsPath,
-                    localReportPath,
-                    ct).ConfigureAwait(false);
+            await _fileTransfer.CopyFromRemoteAsync(
+                target,
+                credential,
+                RemoteReportsPath,
+                localReportPath,
+                ct).ConfigureAwait(false);
 
-                // Parse the reports
-                recommendations = _reportParser.ParseReportDirectory(localReportPath, device.Id);
+            var copiedReports = Directory.GetFiles(localReportPath, "*.*", SearchOption.AllDirectories)
+                .Where(file =>
+                    file.EndsWith(".json", StringComparison.OrdinalIgnoreCase) ||
+                    file.EndsWith(".xml", StringComparison.OrdinalIgnoreCase))
+                .ToList();
+
+            _logger.Information("Copied {Count} HPIA report file(s) from {Hostname}: {Reports}",
+                copiedReports.Count,
+                target,
+                copiedReports.Count == 0 ? "(none)" : string.Join(", ", copiedReports.Select(Path.GetFileName)));
+
+            recommendations = _reportParser.ParseReportDirectory(localReportPath, device.Id)
+                ?? new List<HpiaRecommendation>();
+
+            if (recommendations.Count == 0 && copiedReports.Count > 0)
+            {
+                _logger.Warning("HPIA reports were copied from {Hostname}, but no recommendations were parsed. Reports: {Reports}",
+                    target,
+                    string.Join(", ", copiedReports.Select(Path.GetFileName)));
+                progress?.Report($"{target}: HPIA report copied, but no recommendations were found.");
             }
-            else if (analysisElapsed.TotalSeconds < 15)
+        }
+        catch (Exception ex) when (ex is FileNotFoundException || ex is DirectoryNotFoundException)
+        {
+            if (analysisElapsed.TotalSeconds < 15)
             {
                 // HPIA completed too quickly with no reports — likely a launcher error (e.g., 0xB dialog)
                 _logger.Warning("HPIA completed in {Elapsed:F1}s with no reports on {Hostname} — possible launcher error. " +
                     "Try running HPIA manually on this device or update HPIA to the latest version.",
-                    analysisElapsed.TotalSeconds, device.Hostname);
-                progress?.Report($"{device.Hostname}: HPIA completed but produced no report — possible launcher error (try updating HPIA)");
+                    analysisElapsed.TotalSeconds, target);
+                progress?.Report($"{target}: HPIA completed but produced no report - possible launcher error (try updating HPIA)");
             }
             else
             {
-                _logger.Information("No reports directory found on {Hostname} — device is fully up to date", device.Hostname);
+                _logger.Information("No reports found on {Hostname} - device may be fully up to date", target);
+                progress?.Report($"{target}: No HPIA recommendations report found; device may be up to date.");
             }
-        }
-        catch (FileNotFoundException)
-        {
-            _logger.Information("No reports found on {Hostname} — device may be fully up to date", device.Hostname);
         }
 
         _logger.Information("Found {Count} recommendations for {Hostname}",
-            recommendations.Count, device.Hostname);
+            recommendations.Count, target);
 
         return recommendations;
     }
@@ -308,26 +330,27 @@ public class HpiaManager : IHpiaManager
         IProgress<string> progress,
         CancellationToken ct)
     {
+        var target = RemotePathHelper.GetTarget(device);
         _logger.Information("Deploying HPIA updates to {Hostname} ({Count} selected)",
-            device.Hostname, selectedRecommendations.Count);
+            target, selectedRecommendations.Count);
 
         // Ensure HPIA is staged on the remote machine before deploying
-        progress?.Report($"Ensuring HPIA is staged on {device.Hostname}...");
+        progress?.Report($"Ensuring HPIA is staged on {target}...");
         await ExtractLocallyAsync(ct).ConfigureAwait(false);
-        await StageToRemoteAsync(device.Hostname, credential, ct).ConfigureAwait(false);
+        await StageToRemoteAsync(target, credential, ct).ConfigureAwait(false);
 
-        progress?.Report($"Starting HPIA deployment on {device.Hostname}...");
+        progress?.Report($"Starting HPIA deployment on {target}...");
 
         // Clean up previous runs' Download/Report folders to ensure clean progress tracking
         try
         {
-            progress?.Report($"Preparing remote directories on {device.Hostname}...");
-            await _fileTransfer.DeleteRemoteDirectoryAsync(device.Hostname, credential, RemoteDownloadsPath, ct).ConfigureAwait(false);
-            await _fileTransfer.DeleteRemoteDirectoryAsync(device.Hostname, credential, RemoteReportsPath, ct).ConfigureAwait(false);
+            progress?.Report($"Preparing remote directories on {target}...");
+            await _fileTransfer.DeleteRemoteDirectoryAsync(target, credential, RemoteDownloadsPath, ct).ConfigureAwait(false);
+            await _fileTransfer.DeleteRemoteDirectoryAsync(target, credential, RemoteReportsPath, ct).ConfigureAwait(false);
         }
         catch (Exception ex)
         {
-            _logger.Warning(ex, "Failed to clean up pre-deployment directories on {Hostname}", device.Hostname);
+            _logger.Warning(ex, "Failed to clean up pre-deployment directories on {Hostname}", target);
         }
 
         var remoteLogPath = Path.Combine(RemoteHpiaPath, "HpiaLogs");
@@ -335,7 +358,7 @@ public class HpiaManager : IHpiaManager
         if (AppSettings.BiosPasswords.Count > 0)
         {
             biosFlags = $" /BIOSPwdEnv:{RemoteBiosPasswordEnvVar}";
-            _logger.Information("Configured BIOS password environment variable for {Hostname}", device.Hostname);
+            _logger.Information("Configured BIOS password environment variable for {Hostname}", target);
         }
 
         // Build SoftPaq list from selected recommendations
@@ -359,14 +382,14 @@ public class HpiaManager : IHpiaManager
                 .ToList();
             try
             {
-                var uncSpListPath = $"\\\\{device.Hostname}\\{spListFile[0]}${spListFile.Substring(2)}";
+                var uncSpListPath = RemotePathHelper.ToUncPath(target, spListFile);
                 File.WriteAllLines(uncSpListPath, numericIds);
                 _logger.Information("Wrote SPList file to {Hostname} with {Count} SoftPaq(s): {Ids}",
-                    device.Hostname, numericIds.Count, string.Join(", ", numericIds));
+                    target, numericIds.Count, string.Join(", ", numericIds));
             }
             catch (Exception ex)
             {
-                _logger.Warning(ex, "Failed to write SPList file to {Hostname}, falling back to full install", device.Hostname);
+                _logger.Warning(ex, "Failed to write SPList file to {Hostname}, falling back to full install", target);
             }
 
             // Use /SPList to tell HPIA to only install the specified SoftPaqs
@@ -394,14 +417,14 @@ public class HpiaManager : IHpiaManager
         }
 
         _logger.Information("Deploying {Count} SoftPaq(s) to {Hostname}: {SoftPaqs}",
-            softPaqIds.Count, device.Hostname, string.Join(", ", softPaqIds));
+            softPaqIds.Count, target, string.Join(", ", softPaqIds));
 
         var timeout = TimeSpan.FromMinutes(AppSettings.DeployTimeoutMinutes);
 
-        progress?.Report($"Executing HPIA Install on {device.Hostname} (this may take several minutes)...");
+        progress?.Report($"Executing HPIA Install on {target} (this may take several minutes)...");
 
         var result = await _remoteExecutor.ExecuteAsync(
-            device.Hostname,
+            target,
             credential,
             commandLine,
             null,
@@ -414,27 +437,28 @@ public class HpiaManager : IHpiaManager
         if (HpiaExitCodes.IsSuccess(result.ExitCode))
         {
             _logger.Information("HPIA deployment completed on {Hostname} (ExitCode={ExitCode}): {ExitMessage}",
-                device.Hostname, result.ExitCode, exitMessage);
+                target, result.ExitCode, exitMessage);
 
             if (HpiaExitCodes.RequiresReboot(result.ExitCode))
             {
                 device.Status = DeviceStatus.RebootRequired;
                 device.NeedsReboot = true;
-                progress?.Report($"Deployment completed on {device.Hostname}. {exitMessage}.");
+                progress?.Report($"Deployment completed on {target}. {exitMessage}.");
             }
             else
             {
-                progress?.Report($"Deployment completed successfully on {device.Hostname}.");
+                progress?.Report($"Deployment completed successfully on {target}.");
             }
 
             return;
         }
 
+        var failureMessage = GetHpiaFailureMessage(result);
         _logger.Error("HPIA deployment failed on {Hostname} (ExitCode={ExitCode}): {ExitMessage}",
-            device.Hostname, result.ExitCode, exitMessage);
-        progress?.Report($"Deployment failed on {device.Hostname}: {exitMessage}");
+            target, result.ExitCode, failureMessage);
+        progress?.Report($"Deployment failed on {target}: {failureMessage}");
         throw new InvalidOperationException(
-            $"HPIA deployment failed on {device.Hostname}: {exitMessage} (exit code {result.ExitCode})");
+            $"HPIA deployment failed on {target}: {failureMessage} (exit code {result.ExitCode})");
     }
 
     public async Task CleanupRemoteAsync(
@@ -467,6 +491,14 @@ public class HpiaManager : IHpiaManager
             : RemoteRepoPath;
 
         return $" /Offlinemode:\"{repositoryPath}\"";
+    }
+
+    private static string GetHpiaFailureMessage(RemoteProcessResult result)
+    {
+        if (result.ExitCode == -1 && !string.IsNullOrWhiteSpace(result.ErrorOutput))
+            return result.ErrorOutput;
+
+        return HpiaExitCodes.GetMessage(result.ExitCode);
     }
 
     private static string ToUncPath(string hostname, string remotePath)

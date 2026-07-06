@@ -45,6 +45,7 @@ public class SmbFileTransfer : IFileTransfer
 
         try
         {
+            await DisconnectSmbShareAsync(uncShare, linkedCt).ConfigureAwait(false);
             await ConnectSmbShareAsync(uncShare, credential, linkedCt).ConfigureAwait(false);
 
             if (Directory.Exists(localPath))
@@ -95,6 +96,7 @@ public class SmbFileTransfer : IFileTransfer
 
         try
         {
+            await DisconnectSmbShareAsync(uncShare, linkedCt).ConfigureAwait(false);
             await ConnectSmbShareAsync(uncShare, credential, linkedCt).ConfigureAwait(false);
 
             if (Directory.Exists(uncSourcePath))
@@ -140,6 +142,7 @@ public class SmbFileTransfer : IFileTransfer
 
         try
         {
+            await DisconnectSmbShareAsync(uncShare, ct).ConfigureAwait(false);
             await ConnectSmbShareAsync(uncShare, credential, ct).ConfigureAwait(false);
 
             if (Directory.Exists(uncTargetPath))
@@ -171,6 +174,7 @@ public class SmbFileTransfer : IFileTransfer
             using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
             timeoutCts.CancelAfter(TimeSpan.FromSeconds(10));
 
+            await DisconnectSmbShareAsync(uncShare, timeoutCts.Token).ConfigureAwait(false);
             await ConnectSmbShareAsync(uncShare, credential, timeoutCts.Token).ConfigureAwait(false);
 
             var exists = Directory.Exists(uncShare);
@@ -257,13 +261,65 @@ public class SmbFileTransfer : IFileTransfer
 
     private static async Task CopyDirectoryRecursiveAsync(string sourceDir, string targetDir, CancellationToken ct)
     {
+        // Try robocopy first - dramatically faster for large directories over UNC
+        try
+        {
+            await CopyWithRobocopyAsync(sourceDir, targetDir, ct).ConfigureAwait(false);
+            return;
+        }
+        catch (Exception ex)
+        {
+            Log.Warning(ex, "Robocopy failed, falling back to manual copy from {Source} to {Target}", sourceDir, targetDir);
+        }
+
+        // Fallback: manual byte-by-byte copy
+        await CopyDirectoryManualAsync(sourceDir, targetDir, ct).ConfigureAwait(false);
+    }
+
+    private static async Task CopyWithRobocopyAsync(string sourceDir, string targetDir, CancellationToken ct)
+    {
+        // /MIR = mirror, /MT:8 = 8 threads, /R:1 /W:1 = 1 retry/1s wait
+        // /NJH /NJS /NFL /NDL /NP = suppress output noise
+        var args = $"\"{sourceDir}\" \"{targetDir}\" /MIR /MT:8 /R:1 /W:1 /NJH /NJS /NFL /NDL /NP /DCOPY:DA";
+
+        var psi = new ProcessStartInfo
+        {
+            FileName = "robocopy",
+            Arguments = args,
+            UseShellExecute = false,
+            CreateNoWindow = true,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true
+        };
+
+        using var process = Process.Start(psi)
+            ?? throw new InvalidOperationException("Failed to start robocopy");
+
+        // Drain BOTH stdout and stderr before waiting for exit. Even with output
+        // suppressed, robocopy can still write enough to fill the OS pipe buffer;
+        // if nobody reads it, the process blocks on write and we deadlock on WaitForExit.
+        var outputTask = process.StandardOutput.ReadToEndAsync(ct);
+        var errorTask = process.StandardError.ReadToEndAsync(ct);
+        await process.WaitForExitAsync(ct).ConfigureAwait(false);
+
+        // Robocopy exit codes: 0-7 = success, 8+ = failure
+        if (process.ExitCode >= 8)
+        {
+            var error = await errorTask.ConfigureAwait(false);
+            var output = await outputTask.ConfigureAwait(false);
+            throw new InvalidOperationException(
+                $"robocopy failed with exit code {process.ExitCode}: {error} {output}".Trim());
+        }
+    }
+
+    private static async Task CopyDirectoryManualAsync(string sourceDir, string targetDir, CancellationToken ct)
+    {
         Directory.CreateDirectory(targetDir);
 
         foreach (var file in Directory.GetFiles(sourceDir))
         {
             ct.ThrowIfCancellationRequested();
             var destFile = Path.Combine(targetDir, Path.GetFileName(file));
-            // Use async file streams for UNC copies to avoid blocking the thread pool
             await using var sourceStream = new FileStream(file, FileMode.Open, FileAccess.Read, FileShare.Read, 81920, useAsync: true);
             await using var destStream = new FileStream(destFile, FileMode.Create, FileAccess.Write, FileShare.None, 81920, useAsync: true);
             await sourceStream.CopyToAsync(destStream, 81920, ct).ConfigureAwait(false);
@@ -273,7 +329,7 @@ public class SmbFileTransfer : IFileTransfer
         {
             ct.ThrowIfCancellationRequested();
             var destDir = Path.Combine(targetDir, Path.GetFileName(dir));
-            await CopyDirectoryRecursiveAsync(dir, destDir, ct).ConfigureAwait(false);
+            await CopyDirectoryManualAsync(dir, destDir, ct).ConfigureAwait(false);
         }
     }
 

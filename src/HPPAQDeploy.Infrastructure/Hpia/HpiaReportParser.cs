@@ -135,6 +135,8 @@ public class HpiaReportParser
                     {
                         if (item.ValueKind == JsonValueKind.Object &&
                             (item.TryGetProperty("SoftPaqID", out _) ||
+                             item.TryGetProperty("SoftPaqId", out _) ||
+                             item.TryGetProperty("softPaqId", out _) ||
                              item.TryGetProperty("SoftpaqID", out _) ||
                              item.TryGetProperty("Id", out _)))
                         {
@@ -152,7 +154,7 @@ public class HpiaReportParser
 
     private void TryAddJsonRecommendation(JsonElement rec, int deviceId, List<HpiaRecommendation> results)
     {
-        var softPaqId = GetJsonString(rec, "SoftPaqID", "SoftpaqID", "softpaqId", "Id", "id") ?? string.Empty;
+        var softPaqId = GetJsonString(rec, "SoftPaqID", "SoftPaqId", "SoftpaqID", "softPaqId", "softpaqId", "Id", "id") ?? string.Empty;
         if (string.IsNullOrEmpty(softPaqId)) return;
 
         var rawSeverity = GetJsonString(rec, "Severity", "severity", "ReleaseType", "Importance", "importance") ?? string.Empty;

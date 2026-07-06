@@ -15,13 +15,12 @@ public static class WmiConnectionFactory
     {
         var options = new ConnectionOptions
         {
-            Username = string.IsNullOrEmpty(credential.Domain)
-                ? credential.UserName
-                : $"{credential.Domain}\\{credential.UserName}",
+            Username = BuildUsername(credential),
             Password = credential.Password,
             Impersonation = ImpersonationLevel.Impersonate,
             Authentication = AuthenticationLevel.PacketPrivacy,
-            EnablePrivileges = true
+            EnablePrivileges = true,
+            Timeout = TimeSpan.FromSeconds(HPPAQDeploy.Shared.Configuration.AppSettings.WmiTimeoutSeconds)
         };
 
         var path = $"\\\\{hostname}\\root\\cimv2";
@@ -29,5 +28,13 @@ public static class WmiConnectionFactory
         scope.Connect();
 
         return scope;
+    }
+
+    public static string BuildUsername(NetworkCredential credential)
+    {
+        if (string.IsNullOrWhiteSpace(credential.Domain))
+            return credential.UserName;
+
+        return $"{credential.Domain}\\{credential.UserName}";
     }
 }

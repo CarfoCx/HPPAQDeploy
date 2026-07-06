@@ -10,18 +10,24 @@
     <Nullable>enable</Nullable>
     <ApplicationManifest>app.manifest</ApplicationManifest>
 
-    <!-- App metadata -->
-    <Version>1.0.0</Version>
-    <Company>HPPAQDeploy</Company>
-    <Product>HPPAQDeploy</Product>
-    <Description>HP driver and firmware deployment tool powered by HP Image Assistant</Description>
-    <Copyright>2026</Copyright>
+    <!-- App metadata for Add/Remove Programs and File Explorer -->
+    <Title>HPPAQDeploy Central Manager</Title>
+    <Version>1.0.4</Version>
+    <Authors>HPPAQDeploy Team</Authors>
+    <Company>Carfo Industries</Company>
+    <Product>HPPAQDeploy Fleet Manager</Product>
+    <Description>Enterprise-grade HP driver and firmware deployment tool powered by HP Image Assistant. Manage fleet-wide updates with real-time monitoring.</Description>
+    <Copyright>Copyright © 2026 Carfo Industries</Copyright>
+    <ApplicationIcon>Resources\app_icon.ico</ApplicationIcon>
 
     <!-- Publish as self-contained single file -->
     <SelfContained>true</SelfContained>
     <PublishSingleFile>true</PublishSingleFile>
     <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
     <EnableCompressionInSingleFile>true</EnableCompressionInSingleFile>
+    <OutputPath>..\..\build\</OutputPath>
+    <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
+    <AppendRuntimeIdentifierToOutputPath>false</AppendRuntimeIdentifierToOutputPath>
   </PropertyGroup>
   <ItemGroup>
     <PackageReference Include="CommunityToolkit.Mvvm" Version="8.2.2" />
@@ -39,8 +45,14 @@
   <ItemGroup>
     <Content Include="..\..\hp-hpia-5.3.4.exe">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-      <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+      <CopyToPublishDirectory>Always</CopyToPublishDirectory>
       <Link>hp-hpia-5.3.4.exe</Link>
+      <TargetPath>hp-hpia-5.3.4.exe</TargetPath>
+      <ExcludeFromSingleFile>true</ExcludeFromSingleFile>
     </Content>
+  </ItemGroup>
+  <ItemGroup>
+    <Resource Include="Resources\app_icon.ico" />
+    <Resource Include="Resources\app_icon.png" />
   </ItemGroup>
 </Project>

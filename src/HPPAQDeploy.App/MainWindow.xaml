@@ -5,7 +5,8 @@
         xmlns:converters="clr-namespace:HPPAQDeploy.App.Converters"
         xmlns:vm="clr-namespace:HPPAQDeploy.App.ViewModels"
         xmlns:views="clr-namespace:HPPAQDeploy.App.Views"
-        Title="{Binding CurrentViewName, StringFormat='HPPAQDeploy — {0}'}"
+        Title="HPPAQDeploy Central Manager"
+        Icon="Resources/app_icon.png"
         Width="1400" Height="850"
         MinWidth="1100" MinHeight="700"
         WindowStartupLocation="CenterScreen"
@@ -101,7 +102,8 @@
                                  IsChecked="{Binding CurrentViewName, Converter={StaticResource StringEquals}, ConverterParameter=Credentials, Mode=OneWay}"
                                  Style="{StaticResource TopTabRadioButton}"
                                  Command="{Binding NavigateToCommand}" CommandParameter="Credentials"
-                                 ToolTip="Manage stored credentials (Ctrl+8)">
+                                 ToolTip="Manage stored credentials (Ctrl+8)"
+                                 AutomationProperties.Name="Credentials">
                         <StackPanel Orientation="Horizontal">
                             <materialDesign:PackIcon Kind="KeyVariant" Width="16" Height="16"
                                                      VerticalAlignment="Center" Margin="0,0,6,0" />
@@ -139,7 +141,8 @@
                                  IsChecked="{Binding CurrentViewName, Converter={StaticResource StringEquals}, ConverterParameter=About, Mode=OneWay}"
                                  Style="{StaticResource TopTabRadioButton}"
                                  Command="{Binding NavigateToCommand}" CommandParameter="About"
-                                 ToolTip="About HPPAQDeploy">
+                                 ToolTip="About HPPAQDeploy"
+                                 AutomationProperties.Name="About">
                         <StackPanel Orientation="Horizontal">
                             <materialDesign:PackIcon Kind="InformationOutline" Width="16" Height="16"
                                                      VerticalAlignment="Center" Margin="0,0,6,0" />
@@ -151,7 +154,7 @@
                             Background="Transparent" BorderThickness="0"
                             Foreground="{StaticResource TextSecondaryBrush}"
                             ToolTip="Support HPPAQDeploy" Margin="0,0,8,0" Padding="12,0" Height="30"
-                            Cursor="Hand">
+                            Cursor="Hand" AutomationProperties.Name="Support">
                         <StackPanel Orientation="Horizontal">
                             <materialDesign:PackIcon Kind="Heart" Width="16" Height="16"
                                                      Foreground="{StaticResource AccentRedBrush}"
@@ -317,7 +320,7 @@
                     </TextBlock>
                     <Border Width="1" Height="12" Background="{StaticResource ProgressBarTrackBrush}"
                             Margin="0,0,16,0" VerticalAlignment="Center" />
-                    <TextBlock Text="v1.0.0 | HPIA 5.3.4" Style="{StaticResource CaptionText}"
+                    <TextBlock Text="v1.0.4 | HPIA 5.3.4" Style="{StaticResource CaptionText}"
                                Foreground="{StaticResource TextSecondaryBrush}" Opacity="0.6"
                                VerticalAlignment="Center" />
                 </StackPanel>

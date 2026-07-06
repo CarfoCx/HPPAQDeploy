@@ -39,6 +39,17 @@ public class Device : INotifyPropertyChanged
         set { if (_needsReboot != value) { _needsReboot = value; OnPropertyChanged(); } }
     }
 
+    private double _progress;
+    /// <summary>
+    /// Individual progress (0-100) for scanning or deployment.
+    /// </summary>
+    [NotMapped]
+    public double Progress
+    {
+        get => _progress;
+        set { if (_progress != value) { _progress = value; OnPropertyChanged(); } }
+    }
+
     /// <summary>
     /// UI-only selection flag, not persisted to DB.
     /// </summary>
@@ -58,7 +69,7 @@ public class Device : INotifyPropertyChanged
         get
         {
             if (LastScanned == default) return "Never";
-            var elapsed = DateTime.UtcNow - LastScanned;
+            var elapsed = DateTime.Now - LastScanned;
             if (elapsed.TotalMinutes < 1) return "Just now";
             if (elapsed.TotalMinutes < 60) return $"{(int)elapsed.TotalMinutes}m ago";
             if (elapsed.TotalHours < 24) return $"{(int)elapsed.TotalHours}h ago";

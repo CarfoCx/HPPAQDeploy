@@ -50,8 +50,10 @@ public class HpiaExtractor
         {
             FileName = installerPath,
             Arguments = $"/s /e /f \"{extractPath}\"",
-            UseShellExecute = true,
-            WindowStyle = ProcessWindowStyle.Hidden
+            UseShellExecute = false,
+            CreateNoWindow = true,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true
         };
 
         using var process = Process.Start(psi)
@@ -67,7 +69,10 @@ public class HpiaExtractor
             throw;
         }
 
-        _logger.Information("HPIA extraction process exited with code {ExitCode}", process.ExitCode);
+        var stdout = await process.StandardOutput.ReadToEndAsync(ct).ConfigureAwait(false);
+        var stderr = await process.StandardError.ReadToEndAsync(ct).ConfigureAwait(false);
+        _logger.Information("HPIA extraction process exited with code {ExitCode}. Output: {Output} {Error}",
+            process.ExitCode, stdout.Trim(), stderr.Trim());
 
         // Exit code 0 = success; some SoftPaqs return other codes but still extract fine
         // Wait briefly for file system to finish writing

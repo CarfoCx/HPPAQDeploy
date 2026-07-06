@@ -42,15 +42,16 @@ public partial class GroupsViewModel : ObservableObject
     private void FilterAvailableDevices()
     {
         var search = DeviceSearchText?.Trim() ?? "";
-        var ungrouped = _allDevices.Where(d => string.IsNullOrEmpty(d.GroupName));
+        var currentGroupName = SelectedGroup?.Name;
+        var assignable = _allDevices.Where(d => d.GroupName != currentGroupName);
         if (!string.IsNullOrEmpty(search))
         {
-            ungrouped = ungrouped.Where(d =>
+            assignable = assignable.Where(d =>
                 (d.Hostname?.Contains(search, StringComparison.OrdinalIgnoreCase) ?? false) ||
                 (d.IpAddress?.Contains(search, StringComparison.OrdinalIgnoreCase) ?? false) ||
                 (d.Model?.Contains(search, StringComparison.OrdinalIgnoreCase) ?? false));
         }
-        FilteredAvailableDevices = new ObservableCollection<Device>(ungrouped);
+        FilteredAvailableDevices = new ObservableCollection<Device>(assignable);
     }
 
     public bool HasSelectedGroup => SelectedGroup is not null;
@@ -73,6 +74,7 @@ public partial class GroupsViewModel : ObservableObject
     {
         OnPropertyChanged(nameof(HasSelectedGroup));
         AsyncInitHelper.SafeFireAndForget(LoadGroupDevicesAsync, nameof(GroupsViewModel));
+        FilterAvailableDevices();
     }
 
     [RelayCommand]
@@ -110,6 +112,7 @@ public partial class GroupsViewModel : ObservableObject
         {
             StatusMessage = $"Error loading groups: {ex.Message}";
             Log.Error(ex, "Failed to load groups");
+            SnackbarService.ShowError($"Error loading groups: {ex.Message}");
         }
         finally
         {
@@ -135,6 +138,7 @@ public partial class GroupsViewModel : ObservableObject
         {
             StatusMessage = $"Error loading devices: {ex.Message}";
             Log.Error(ex, "Failed to load group devices");
+            SnackbarService.ShowError($"Error loading devices: {ex.Message}");
         }
     }
 
@@ -158,6 +162,7 @@ public partial class GroupsViewModel : ObservableObject
         catch (Exception ex)
         {
             Log.Error(ex, "Failed to load available devices");
+            SnackbarService.ShowError("Failed to load available devices.");
         }
     }
 
@@ -193,6 +198,7 @@ public partial class GroupsViewModel : ObservableObject
         {
             StatusMessage = $"Error creating group: {ex.Message}";
             Log.Error(ex, "Failed to create group");
+            SnackbarService.ShowError($"Error creating group: {ex.Message}");
         }
     }
 
@@ -220,19 +226,46 @@ public partial class GroupsViewModel : ObservableObject
         {
             StatusMessage = $"Error deleting group: {ex.Message}";
             Log.Error(ex, "Failed to delete group");
+            SnackbarService.ShowError($"Error deleting group: {ex.Message}");
         }
     }
 
     [RelayCommand]
     private async Task AssignToGroupAsync()
     {
-        if (SelectedGroup is null || SelectedAvailableDevice is null) return;
+        if (SelectedGroup is null) return;
+
+        var deviceToAssign = SelectedAvailableDevice;
+        if (deviceToAssign is null && !string.IsNullOrWhiteSpace(DeviceSearchText))
+        {
+            var text = DeviceSearchText.Trim();
+            deviceToAssign = FilteredAvailableDevices.FirstOrDefault(d => 
+                string.Equals(d.Hostname, text, StringComparison.OrdinalIgnoreCase) || 
+                string.Equals(d.IpAddress, text, StringComparison.OrdinalIgnoreCase))
+                ?? FilteredAvailableDevices.FirstOrDefault();
+        }
+
+        if (deviceToAssign is null)
+        {
+            StatusMessage = "Please select a device to assign.";
+            return;
+        }
+
+        if (!string.IsNullOrEmpty(deviceToAssign.GroupName) && deviceToAssign.GroupName != SelectedGroup.Name)
+        {
+            if (!DialogHelper.Confirm(
+                $"Device '{deviceToAssign.Hostname}' is currently in group '{deviceToAssign.GroupName}'.\n\nDo you want to move it to '{SelectedGroup.Name}'?",
+                "Move Device"))
+            {
+                return;
+            }
+        }
 
         try
         {
             var groupName = SelectedGroup.Name;
-            await _deviceRepository.AssignGroupAsync([SelectedAvailableDevice.Id], groupName);
-            StatusMessage = $"{SelectedAvailableDevice.Hostname} assigned to '{groupName}'.";
+            await _deviceRepository.AssignGroupAsync([deviceToAssign.Id], groupName);
+            StatusMessage = $"{deviceToAssign.Hostname} assigned to '{groupName}'.";
             SelectedAvailableDevice = null;
             DeviceSearchText = "";
             await LoadGroupDevicesAsync();
@@ -246,6 +279,7 @@ public partial class GroupsViewModel : ObservableObject
         {
             StatusMessage = $"Error assigning device: {ex.Message}";
             Log.Error(ex, "Failed to assign device to group");
+            SnackbarService.ShowError($"Error assigning device: {ex.Message}");
         }
     }
 
@@ -298,6 +332,7 @@ public partial class GroupsViewModel : ObservableObject
         {
             StatusMessage = $"Error: {ex.Message}";
             Log.Error(ex, "Failed to assign devices by model");
+            SnackbarService.ShowError($"Error: {ex.Message}");
         }
     }
 
@@ -333,6 +368,7 @@ public partial class GroupsViewModel : ObservableObject
         {
             StatusMessage = $"Error assigning devices: {ex.Message}";
             Log.Error(ex, "Failed to assign all devices to group");
+            SnackbarService.ShowError($"Error assigning devices: {ex.Message}");
         }
     }
 
@@ -358,6 +394,7 @@ public partial class GroupsViewModel : ObservableObject
         {
             StatusMessage = $"Error removing device: {ex.Message}";
             Log.Error(ex, "Failed to remove device from group");
+            SnackbarService.ShowError($"Error removing device: {ex.Message}");
         }
     }
 

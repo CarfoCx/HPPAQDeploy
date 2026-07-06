@@ -109,6 +109,7 @@ public partial class MainViewModel : ObservableObject
                 break;
             case GroupsViewModel groups:
                 AsyncInitHelper.SafeFireAndForget(groups.LoadGroupsCommand.ExecuteAsync(null), nameof(GroupsViewModel));
+                AsyncInitHelper.SafeFireAndForget(groups.LoadAvailableDevicesCommand.ExecuteAsync(null), nameof(GroupsViewModel));
                 break;
             case DeployViewModel deploy:
                 AsyncInitHelper.SafeFireAndForget(deploy.RefreshGroupsAsync(), nameof(DeployViewModel));

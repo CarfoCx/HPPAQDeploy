@@ -12,6 +12,7 @@ using HPPAQDeploy.Infrastructure.Security;
 using HPPAQDeploy.Infrastructure.Services;
 using HPPAQDeploy.Shared.Configuration;
 using HPPAQDeploy.Shared.Helpers;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Serilog;
@@ -116,6 +117,39 @@ public partial class App : Application
             {
                 var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
                 db.Initialize();
+
+                // SQLite integrity check — detect and handle corruption
+                try
+                {
+                    var result = db.Database.ExecuteSqlRaw("PRAGMA integrity_check");
+                    Log.Information("Database integrity check passed");
+                }
+                catch (Exception dbEx)
+                {
+                    Log.Error(dbEx, "Database integrity check failed");
+                    var dbPath = AppSettings.DatabasePath;
+                    var backupPath = dbPath + $".corrupt.{DateTime.Now:yyyyMMdd-HHmmss}.bak";
+
+                    if (MessageBox.Show(
+                        $"The database appears to be corrupted.\n\n" +
+                        $"Would you like to back up the current database and start fresh?\n\n" +
+                        $"Backup will be saved to:\n{backupPath}",
+                        "Database Corruption Detected",
+                        MessageBoxButton.YesNo, MessageBoxImage.Warning) == MessageBoxResult.Yes)
+                    {
+                        try
+                        {
+                            File.Copy(dbPath, backupPath, overwrite: true);
+                            File.Delete(dbPath);
+                            db.Initialize(); // Re-create fresh DB
+                            Log.Warning("Corrupt database backed up to {BackupPath} and re-created", backupPath);
+                        }
+                        catch (Exception resetEx)
+                        {
+                            Log.Error(resetEx, "Failed to reset corrupt database");
+                        }
+                    }
+                }
             }
 
             // Start scheduled scan service

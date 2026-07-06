@@ -2,6 +2,7 @@ using System.Management;
 using System.Net;
 using HPPAQDeploy.Core.Interfaces;
 using HPPAQDeploy.Core.Models;
+using HPPAQDeploy.Infrastructure.Remote;
 using HPPAQDeploy.Shared.Configuration;
 using HPPAQDeploy.Shared.Helpers;
 using Serilog;
@@ -39,9 +40,7 @@ public class WmiDeviceDiscovery : IDeviceDiscovery
             {
                 Authentication = AuthenticationLevel.PacketPrivacy,
                 Impersonation = ImpersonationLevel.Impersonate,
-                Username = string.IsNullOrEmpty(credential.Domain)
-                    ? credential.UserName
-                    : $"{credential.Domain}\\{credential.UserName}",
+                Username = WmiConnectionFactory.BuildUsername(credential),
                 Password = credential.Password,
                 Timeout = TimeSpan.FromSeconds(AppSettings.WmiTimeoutSeconds)
             };
@@ -119,7 +118,7 @@ public class WmiDeviceDiscovery : IDeviceDiscovery
 
             var device = new Device
             {
-                Hostname = hostname,
+                Hostname = string.IsNullOrWhiteSpace(hostname) ? ipAddress : hostname,
                 IpAddress = ipAddress,
                 Manufacturer = manufacturer,
                 Model = model,
@@ -128,7 +127,7 @@ public class WmiDeviceDiscovery : IDeviceDiscovery
                 OsVersion = $"{osCaption} ({osVersion})",
                 BiosVersion = biosVersion,
                 Status = DeviceStatus.Online,
-                LastScanned = DateTime.UtcNow
+                LastScanned = DateTime.Now
             };
 
             _logger.Information("Discovered HP device: {Hostname} ({Model}) at {IpAddress}",

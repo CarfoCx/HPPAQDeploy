@@ -15,6 +15,9 @@ public class DcomRemoteExecutor : IRemoteExecutor
 {
     private readonly ILogger _logger = Log.ForContext<DcomRemoteExecutor>();
     private readonly CircuitBreaker _circuitBreaker;
+    private static readonly TimeSpan RemoteStartGracePeriod = TimeSpan.FromMinutes(5);
+    private static readonly TimeSpan FallbackLaunchDelay = TimeSpan.FromSeconds(75);
+    private static readonly TimeSpan HpiaProgressStallTimeout = TimeSpan.FromMinutes(8);
 
     public DcomRemoteExecutor(CircuitBreaker circuitBreaker)
     {
@@ -182,13 +185,10 @@ public class DcomRemoteExecutor : IRemoteExecutor
 
         // Create and run a one-time scheduled task via Win32_Process.Create
         // /it = interactive (run in logged-in user's desktop session — required for HPIA's WPF components)
-        var taskCommand = File.Exists(ConvertToUncPath(hostname, vbsFile))
-            ? $"wscript.exe \\\"{vbsFile}\\\""
-            : $"cmd /c \\\"{batchFile}\\\"";
-        // /it = interactive token: required for HPIA's WPF components.
-        // The VBS wrapper hides the cmd window; HPIA's /Silent flag suppresses its own UI.
+        // schtasks /tr requires the command to be properly quoted.
+        var taskCommand = $"cmd.exe /c \"\"{batchFile}\"\"";
         var schtasksCreate = $"schtasks /create /tn \"{taskName}\" /tr \"{taskCommand}\" " +
-            $"/sc once /st 00:00 /f /ru \"{taskUser}\" /rp \"{cred.Password}\" /rl highest /it";
+            $"/sc once /st 00:00 /f /ru \"{taskUser}\" /rp \"{cred.Password}\" /rl highest";
         var schtasksRun = $"schtasks /run /tn \"{taskName}\"";
 
         // Create the scheduled task
@@ -211,6 +211,11 @@ public class DcomRemoteExecutor : IRemoteExecutor
 
         // Wait for schtasks /create to finish
         await Task.Delay(2000, ct).ConfigureAwait(false);
+
+        // Delete any stale exit code file before starting. Deleting it after launch can race
+        // a fast HPIA failure and erase the only completion signal.
+        var uncExitCodePath = ConvertToUncPath(hostname, exitCodeFile);
+        try { if (File.Exists(uncExitCodePath)) File.Delete(uncExitCodePath); } catch (Exception ex) { Log.Debug(ex, "Failed to delete stale exit code file on {Hostname}", hostname); }
 
         // Run the scheduled task
         var (runRv, _2) = await Task.Run(() =>
@@ -237,10 +242,11 @@ public class DcomRemoteExecutor : IRemoteExecutor
                 var query = new ObjectQuery(
                     $"SELECT ProcessId FROM Win32_Process WHERE CommandLine LIKE '%{taskName}%' OR CommandLine LIKE '%run_hpia.bat%'");
                 using var searcher = new ManagementObjectSearcher(scope, query);
-                var results = searcher.Get();
+                using var results = searcher.Get();
                 foreach (ManagementObject obj in results)
                 {
-                    return (uint)obj["ProcessId"];
+                    using (obj)
+                        return (uint)obj["ProcessId"];
                 }
                 return (uint)0;
             }, ct).ConfigureAwait(false);
@@ -253,9 +259,6 @@ public class DcomRemoteExecutor : IRemoteExecutor
         progress?.Report($"Scheduled task started on {hostname}");
 
         // Poll for completion by checking if the exit code file appears (batch finished)
-        var uncExitCodePath = ConvertToUncPath(hostname, exitCodeFile);
-        // Delete any stale exit code file first
-        try { if (File.Exists(uncExitCodePath)) File.Delete(uncExitCodePath); } catch (Exception ex) { Log.Debug(ex, "Failed to delete stale exit code file on {Hostname}", hostname); }
 
         // Monitor HPIA Downloads and Reports directories for real progress
         var uncDownloadsDir = ConvertToUncPath(hostname, Path.Combine(AppSettings.RemoteTempPath, "Downloads"));
@@ -263,9 +266,12 @@ public class DcomRemoteExecutor : IRemoteExecutor
         int _lastSoftPaqCount = 0;
         string _lastSoftPaqName = "";
         string _lastProgressMessage = "";
+        string _lastActivityFingerprint = "";
+        var lastHpiaActivityTime = DateTime.UtcNow;
+        var observedHpiaActivity = false;
 
         bool processRunning = true;
-        bool waitingReported = false;
+        bool fallbackStarted = false;
         var startTime = DateTime.UtcNow;
         var lastLogTime = DateTime.UtcNow;
         var lastProgressTime = DateTime.UtcNow;
@@ -299,6 +305,7 @@ public class DcomRemoteExecutor : IRemoteExecutor
             await Task.Delay(3000, linkedCt).ConfigureAwait(false);
 
             var elapsed = DateTime.UtcNow - startTime;
+            var processSummary = TryGetRemoteProcessSummary(scope, taskName);
 
             // Report progress to UI every ~10 seconds, but only when something changes
             if (DateTime.UtcNow - lastProgressTime > TimeSpan.FromSeconds(10))
@@ -315,13 +322,46 @@ public class DcomRemoteExecutor : IRemoteExecutor
                         _lastProgressMessage = msg;
                     }
                 }
-                else if (!waitingReported)
+                else
                 {
-                    progress?.Report($"{hostname}: Waiting for HPIA...");
-                    waitingReported = true;
+                    var status = string.IsNullOrWhiteSpace(processSummary)
+                        ? "HPIA: Preparing system"
+                        : $"HPIA: {processSummary}";
+                    
+                    var msg = $"{hostname}: {status}...";
+                    if (msg != _lastProgressMessage)
+                    {
+                        progress?.Report(msg);
+                        _lastProgressMessage = msg;
+                    }
                 }
 
                 lastProgressTime = DateTime.UtcNow;
+            }
+
+            var activityFingerprint = TryGetHpiaActivityFingerprint(uncDownloadsDir, uncReportsDir);
+            if (!string.IsNullOrEmpty(activityFingerprint))
+            {
+                observedHpiaActivity = true;
+                if (!string.Equals(activityFingerprint, _lastActivityFingerprint, StringComparison.Ordinal))
+                {
+                    _lastActivityFingerprint = activityFingerprint;
+                    lastHpiaActivityTime = DateTime.UtcNow;
+                }
+                else if (DateTime.UtcNow - lastHpiaActivityTime > HpiaProgressStallTimeout)
+                {
+                    var detail = !string.IsNullOrEmpty(_lastSoftPaqName)
+                        ? _lastSoftPaqName
+                        : "HPIA processing";
+                    _logger.Warning("Remote HPIA on {Hostname} appears stalled for {Timeout} at {Detail}",
+                        hostname, HpiaProgressStallTimeout, detail);
+                    progress?.Report($"{hostname}: HPIA appears stalled at {detail}; stopping remote process.");
+                    if (pid > 0)
+                        try { await Task.Run(() => TryKillProcess(scope, pid)).ConfigureAwait(false); } catch (Exception ex) { Log.Debug(ex, "Failed to kill process PID {Pid} on {Hostname} during stall cleanup", pid, hostname); }
+                    try { await Task.Run(() => TryKillProcessByName(scope, "HPImageAssistant")).ConfigureAwait(false); } catch (Exception ex) { Log.Debug(ex, "Failed to kill HPImageAssistant on {Hostname} during stall cleanup", hostname); }
+                    CleanupScheduledTask(scope, taskName);
+                    return new RemoteProcessResult(-1, string.Empty, $"Process stalled while processing {detail}");
+                }
             }
 
             // Log to file every ~60 seconds (less spam)
@@ -350,7 +390,8 @@ public class DcomRemoteExecutor : IRemoteExecutor
                         {
                             var query = new ObjectQuery($"SELECT ProcessId FROM Win32_Process WHERE ProcessId = {pid}");
                             using var searcher = new ManagementObjectSearcher(scope, query);
-                            return searcher.Get().Count > 0;
+                            using var results = searcher.Get();
+                            return results.Count > 0;
                         }, linkedCt).ConfigureAwait(false);
                     }
                     catch (ManagementException ex)
@@ -359,6 +400,41 @@ public class DcomRemoteExecutor : IRemoteExecutor
                         processRunning = false;
                     }
                 }
+            }
+
+            if (processRunning && pid == 0 && elapsed > RemoteStartGracePeriod && !IsRemoteHpiaTaskRunning(scope, taskName))
+            {
+                var message = observedHpiaActivity
+                    ? "Remote HPIA task stopped before writing an exit code"
+                    : "Remote HPIA task did not start or stopped before producing output";
+                _logger.Warning("{Message} on {Hostname}", message, hostname);
+                progress?.Report($"{hostname}: {message}.");
+                CleanupScheduledTask(scope, taskName);
+                return new RemoteProcessResult(-1, string.Empty, message);
+            }
+
+            if (processRunning &&
+                !fallbackStarted &&
+                !observedHpiaActivity &&
+                elapsed > FallbackLaunchDelay &&
+                !HasRemoteHpiaProcess(scope, taskName))
+            {
+                fallbackStarted = true;
+                var taskState = TryQueryScheduledTask(scope, hostname, taskName);
+                _logger.Warning("Scheduled task {TaskName} on {Hostname} did not launch HPIA after {Elapsed:F0}s. {TaskState}. Falling back to WMI process launch.",
+                    taskName, hostname, elapsed.TotalSeconds, taskState);
+                progress?.Report($"{hostname}: Scheduled task did not launch HPIA; trying direct WMI launch...");
+                CleanupScheduledTask(scope, taskName);
+
+                pid = await Task.Run(() => StartRemoteProcess(scope, wrappedCommand)).ConfigureAwait(false);
+                if (pid == 0)
+                {
+                    return new RemoteProcessResult(-1, string.Empty,
+                        $"Scheduled task did not launch HPIA and direct WMI launch failed. {taskState}");
+                }
+
+                _logger.Information("Started fallback WMI process on {Hostname}, PID {Pid}", hostname, pid);
+                progress?.Report($"{hostname}: Started direct HPIA launcher (PID {pid})");
             }
         }
         }
@@ -424,7 +500,7 @@ public class DcomRemoteExecutor : IRemoteExecutor
                 var scope = WmiConnectionFactory.CreateScope(hostname, credential);
                 using var searcher = new ManagementObjectSearcher(scope,
                     new ObjectQuery("SELECT Caption FROM Win32_OperatingSystem"));
-                var results = searcher.Get();
+                using var results = searcher.Get();
                 return results.Count > 0;
             }, timeoutCts.Token).ConfigureAwait(false);
         }
@@ -508,10 +584,14 @@ public class DcomRemoteExecutor : IRemoteExecutor
         {
             var query = new ObjectQuery($"SELECT * FROM Win32_Process WHERE ProcessId = {pid}");
             using var searcher = new ManagementObjectSearcher(scope, query);
-            foreach (ManagementObject process in searcher.Get())
+            using var results = searcher.Get();
+            foreach (ManagementObject process in results)
             {
-                process.InvokeMethod("Terminate", new object[] { (uint)1 });
-                _logger.Information("Killed remote process PID {Pid}", pid);
+                using (process)
+                {
+                    process.InvokeMethod("Terminate", new object[] { (uint)1 });
+                    _logger.Information("Killed remote process PID {Pid}", pid);
+                }
             }
         }
         catch (Exception ex)
@@ -526,11 +606,15 @@ public class DcomRemoteExecutor : IRemoteExecutor
         {
             var query = new ObjectQuery($"SELECT * FROM Win32_Process WHERE Name LIKE '{processName}%'");
             using var searcher = new ManagementObjectSearcher(scope, query);
-            foreach (ManagementObject process in searcher.Get())
+            using var results = searcher.Get();
+            foreach (ManagementObject process in results)
             {
-                var pid = (uint)process["ProcessId"];
-                process.InvokeMethod("Terminate", new object[] { (uint)1 });
-                _logger.Information("Killed remote process {Name} PID {Pid}", processName, pid);
+                using (process)
+                {
+                    var pid = (uint)process["ProcessId"];
+                    process.InvokeMethod("Terminate", new object[] { (uint)1 });
+                    _logger.Information("Killed remote process {Name} PID {Pid}", processName, pid);
+                }
             }
         }
         catch (Exception ex)
@@ -598,6 +682,172 @@ public class DcomRemoteExecutor : IRemoteExecutor
         }
 
         return lastCount > 0 ? $"Processing SoftPaqs ({lastCount} so far)" : "";
+    }
+
+    private static string TryGetHpiaActivityFingerprint(string uncDownloadsDir, string uncReportsDir)
+    {
+        try
+        {
+            var candidates = new List<FileSystemInfo>();
+
+            AddDirectoryActivity(candidates, uncDownloadsDir);
+            AddDirectoryActivity(candidates, uncReportsDir);
+
+            if (candidates.Count == 0)
+                return "";
+
+            var latest = candidates
+                .OrderByDescending(item => item.LastWriteTimeUtc)
+                .First();
+
+            return $"{candidates.Count}|{latest.FullName}|{latest.LastWriteTimeUtc.Ticks}|{GetLengthOrZero(latest)}";
+        }
+        catch (Exception ex)
+        {
+            Log.Debug(ex, "Non-critical error while checking HPIA activity");
+            return "";
+        }
+    }
+
+    private static void AddDirectoryActivity(List<FileSystemInfo> candidates, string path)
+    {
+        if (!Directory.Exists(path))
+            return;
+
+        var root = new DirectoryInfo(path);
+        candidates.Add(root);
+        candidates.AddRange(root.EnumerateDirectories("*", SearchOption.AllDirectories));
+        candidates.AddRange(root.EnumerateFiles("*", SearchOption.AllDirectories));
+    }
+
+    private static long GetLengthOrZero(FileSystemInfo item)
+        => item is FileInfo file ? file.Length : 0;
+
+    private bool IsRemoteHpiaTaskRunning(ManagementScope scope, string taskName)
+    {
+        try
+        {
+            var escapedTaskName = taskName.Replace("'", "''");
+            var query = new ObjectQuery(
+                "SELECT ProcessId FROM Win32_Process " +
+                $"WHERE CommandLine LIKE '%{escapedTaskName}%' " +
+                "OR CommandLine LIKE '%run_hpia.bat%' " +
+                "OR CommandLine LIKE '%run_hidden.vbs%' " +
+                "OR CommandLine LIKE '%HPImageAssistant.exe%' " +
+                "OR Name LIKE 'HPImageAssistant%'");
+            using var searcher = new ManagementObjectSearcher(scope, query);
+            using var results = searcher.Get();
+            return results.Count > 0;
+        }
+        catch (Exception ex)
+        {
+            _logger.Debug(ex, "Could not verify remote HPIA process state");
+            return true;
+        }
+    }
+
+    private bool HasRemoteHpiaProcess(ManagementScope scope, string taskName)
+    {
+        try
+        {
+            var escapedTaskName = taskName.Replace("'", "''");
+            var query = new ObjectQuery(
+                "SELECT ProcessId FROM Win32_Process " +
+                $"WHERE CommandLine LIKE '%{escapedTaskName}%' " +
+                "OR CommandLine LIKE '%run_hpia.bat%' " +
+                "OR CommandLine LIKE '%HPImageAssistant.exe%' " +
+                "OR Name LIKE 'HPImageAssistant%'");
+            using var searcher = new ManagementObjectSearcher(scope, query);
+            using var results = searcher.Get();
+            return results.Count > 0;
+        }
+        catch (Exception ex)
+        {
+            _logger.Debug(ex, "Could not check remote HPIA process state");
+            return false;
+        }
+    }
+
+    private uint StartRemoteProcess(ManagementScope scope, string commandLine)
+    {
+        try
+        {
+            using var processClass = new ManagementClass(scope, new ManagementPath("Win32_Process"), null);
+            var inParams = processClass.GetMethodParameters("Create");
+            inParams["CommandLine"] = commandLine;
+            var outParams = processClass.InvokeMethod("Create", inParams, null);
+            var rv = (uint)outParams["ReturnValue"];
+            if (rv != 0)
+            {
+                _logger.Warning("Fallback WMI process launch failed with return value {ReturnValue}", rv);
+                return 0;
+            }
+
+            return (uint)outParams["ProcessId"];
+        }
+        catch (Exception ex)
+        {
+            _logger.Warning(ex, "Fallback WMI process launch failed");
+            return 0;
+        }
+    }
+
+    private string TryQueryScheduledTask(ManagementScope scope, string hostname, string taskName)
+    {
+        try
+        {
+            var queryCommand = $"cmd /c schtasks /query /tn \"{taskName}\" /fo list /v > \"{AppSettings.RemoteTempPath}\\task_status.txt\" 2>&1";
+            _ = StartRemoteProcess(scope, queryCommand);
+            Thread.Sleep(1500);
+
+            var uncStatusPath = ConvertToUncPath(hostname, Path.Combine(AppSettings.RemoteTempPath, "task_status.txt"));
+            return File.Exists(uncStatusPath)
+                ? File.ReadAllText(uncStatusPath).Replace("\r", " ").Replace("\n", " ").Trim()
+                : "Scheduled task status unavailable";
+        }
+        catch (Exception ex)
+        {
+            _logger.Debug(ex, "Could not query scheduled task {TaskName}", taskName);
+            return "Scheduled task status unavailable";
+        }
+    }
+
+    private string TryGetRemoteProcessSummary(ManagementScope scope, string taskName)
+    {
+        try
+        {
+            var escapedTaskName = taskName.Replace("'", "''");
+            var query = new ObjectQuery(
+                "SELECT Name, ProcessId, CommandLine FROM Win32_Process " +
+                $"WHERE CommandLine LIKE '%{escapedTaskName}%' " +
+                "OR CommandLine LIKE '%run_hpia.bat%' " +
+                "OR CommandLine LIKE '%HPImageAssistant.exe%' " +
+                "OR Name LIKE 'HPImageAssistant%'");
+            using var searcher = new ManagementObjectSearcher(scope, query);
+            using var results = searcher.Get();
+            var processes = new List<string>();
+            foreach (ManagementObject process in results)
+            {
+                using (process)
+                {
+                    if (processes.Count < 3)
+                    {
+                        var name = process["Name"]?.ToString() ?? "process";
+                        var pid = process["ProcessId"]?.ToString() ?? "?";
+                        processes.Add($"{name} pid {pid}");
+                    }
+                }
+            }
+
+            return processes.Count == 0
+                ? "no HPIA process found yet"
+                : "running " + string.Join(", ", processes);
+        }
+        catch (Exception ex)
+        {
+            _logger.Debug(ex, "Could not summarize remote HPIA processes");
+            return "";
+        }
     }
 
     private void CleanupScheduledTask(ManagementScope scope, string taskName)

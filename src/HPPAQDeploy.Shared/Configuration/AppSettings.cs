@@ -133,7 +133,15 @@ public static class AppSettings
         var dir = Path.GetDirectoryName(SettingsFilePath);
         if (dir != null) Directory.CreateDirectory(dir);
         var json = JsonSerializer.Serialize(data, new JsonSerializerOptions { WriteIndented = true });
-        File.WriteAllText(SettingsFilePath, json);
+
+        // Write to a temp file first, then atomically replace, so a crash or power
+        // loss mid-write can never leave a truncated/corrupt settings.json behind.
+        var tempPath = SettingsFilePath + ".tmp";
+        File.WriteAllText(tempPath, json);
+        if (File.Exists(SettingsFilePath))
+            File.Replace(tempPath, SettingsFilePath, null);
+        else
+            File.Move(tempPath, SettingsFilePath);
     }
 
     [System.Runtime.Versioning.SupportedOSPlatform("windows")]
@@ -186,6 +194,20 @@ public static class AppSettings
 
             if (data.BiosPasswordsProtected?.Count > 0)
                 BiosPasswords = data.BiosPasswordsProtected.Select(p => UnprotectString(p)).ToList();
+
+            // Guard against corrupt/legacy values that would crash the app
+            // (e.g. SemaphoreSlim(0) throws; a 0ms/0min timeout would fail instantly).
+            DefaultPingConcurrency = Math.Clamp(DefaultPingConcurrency, 1, 4096);
+            DefaultWmiConcurrency = Math.Clamp(DefaultWmiConcurrency, 1, 1024);
+            DefaultScanConcurrency = Math.Clamp(DefaultScanConcurrency, 1, 1024);
+            DefaultDeployConcurrency = Math.Clamp(DefaultDeployConcurrency, 1, 1024);
+            PingTimeoutMs = Math.Clamp(PingTimeoutMs, 100, 60_000);
+            WmiTimeoutSeconds = Math.Max(1, WmiTimeoutSeconds);
+            AnalysisTimeoutMinutes = Math.Max(1, AnalysisTimeoutMinutes);
+            DeployTimeoutMinutes = Math.Max(1, DeployTimeoutMinutes);
+            FileTransferTimeoutMinutes = Math.Max(1, FileTransferTimeoutMinutes);
+            RetryMaxAttempts = Math.Clamp(RetryMaxAttempts, 1, 10);
+            RetryBaseDelayMs = Math.Clamp(RetryBaseDelayMs, 0, 60_000);
         }
         catch (Exception ex)
         {

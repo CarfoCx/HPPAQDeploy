@@ -11,7 +11,10 @@ public class Credential
     public DateTime Created { get; set; }
     public bool IsDefault { get; set; }
 
-    public override string ToString() => Label;
+    public override string ToString() =>
+        string.IsNullOrEmpty(Domain)
+            ? $"{Label} ({Username})"
+            : $"{Label} ({Domain}\\{Username})";
 
     public override bool Equals(object? obj)
     {

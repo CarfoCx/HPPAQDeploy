@@ -555,9 +555,68 @@ public partial class DevicesViewModel : ObservableObject
     private async Task RescanDeviceAsync()
     {
         if (SelectedDevice is null) return;
-        StatusMessage = $"Re-scanning {SelectedDevice.Hostname}...";
-        await LoadDevicesAsync();
-        StatusMessage = "Device list refreshed.";
+        if (SelectedCredential is null)
+        {
+            StatusMessage = "Please select credentials to rescan.";
+            return;
+        }
+
+        var host = SelectedDevice.Hostname ?? SelectedDevice.IpAddress;
+        StatusMessage = $"Re-scanning {host}...";
+        IsLoading = true;
+
+        try
+        {
+            // Ping check first
+            using var ping = new System.Net.NetworkInformation.Ping();
+            var pingReply = await ping.SendPingAsync(host!, AppSettings.PingTimeoutMs);
+
+            if (pingReply.Status != System.Net.NetworkInformation.IPStatus.Success)
+            {
+                SelectedDevice.Status = DeviceStatus.Offline;
+                await _deviceRepository.UpdateAsync(SelectedDevice);
+                StatusMessage = $"{host} is offline (ping failed).";
+                SnackbarService.ShowWarning($"{host} is offline.");
+                await LoadDevicesAsync();
+                return;
+            }
+
+            // WMI re-identification
+            var networkCred = await _credentialStore.DecryptAsync(SelectedCredential);
+            var refreshed = await _discovery.IdentifyDeviceAsync(host!, networkCred, CancellationToken.None);
+
+            if (refreshed is not null)
+            {
+                SelectedDevice.Model = refreshed.Model;
+                SelectedDevice.SerialNumber = refreshed.SerialNumber;
+                SelectedDevice.ProductId = refreshed.ProductId;
+                SelectedDevice.OsVersion = refreshed.OsVersion;
+                SelectedDevice.IpAddress = refreshed.IpAddress;
+                SelectedDevice.Status = DeviceStatus.Online;
+                SelectedDevice.LastScanned = DateTime.Now;
+                await _deviceRepository.UpdateAsync(SelectedDevice);
+                StatusMessage = $"Re-scanned {host}: {refreshed.Model} - Online.";
+                SnackbarService.ShowSuccess($"Re-scanned {host} successfully");
+            }
+            else
+            {
+                SelectedDevice.Status = DeviceStatus.Online;
+                SelectedDevice.LastScanned = DateTime.Now;
+                await _deviceRepository.UpdateAsync(SelectedDevice);
+                StatusMessage = $"{host} is online but could not be re-identified.";
+            }
+        }
+        catch (Exception ex)
+        {
+            StatusMessage = $"Re-scan failed for {host}: {ex.Message}";
+            Log.Error(ex, "Rescan failed for {Host}", host);
+            SnackbarService.ShowError($"Re-scan failed: {ex.Message}");
+        }
+        finally
+        {
+            IsLoading = false;
+            await LoadDevicesAsync();
+        }
     }
 
     [RelayCommand]

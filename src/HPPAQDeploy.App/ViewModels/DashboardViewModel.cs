@@ -158,6 +158,7 @@ public partial class DashboardViewModel : ObservableObject
         catch (Exception ex)
         {
             Log.Error(ex, "Failed to load dashboard data");
+            SnackbarService.ShowError("Failed to load dashboard data.");
         }
         finally
         {
@@ -195,6 +196,7 @@ public partial class DashboardViewModel : ObservableObject
         {
             ExportStatus = $"CSV export failed: {ex.Message}";
             Log.Error(ex, "Failed to export CSV compliance report");
+            SnackbarService.ShowError($"Export failed: {ex.Message}");
         }
     }
 
@@ -218,6 +220,7 @@ public partial class DashboardViewModel : ObservableObject
         {
             ExportStatus = $"HTML export failed: {ex.Message}";
             Log.Error(ex, "Failed to export HTML compliance report");
+            SnackbarService.ShowError($"Export failed: {ex.Message}");
         }
     }
 }
