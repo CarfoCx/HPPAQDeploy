@@ -30,9 +30,8 @@ HPPAQDeploy scans your network for HP devices, analyzes them for missing drivers
 
 ## Quick Start
 
-1. **Download** `HPPAQDeploy.exe` and `hp-hpia-5.3.4.exe` from [Releases](https://github.com/CarfoCx/HPPAQDeploy/releases)
-2. Place both files in the same folder
-3. Run `HPPAQDeploy.exe`
+1. **Download** the latest `HPPAQDeploy-Setup-*-win-x64.exe` from [Releases](https://github.com/CarfoCx/HPPAQDeploy/releases)
+2. Run the installer and launch HPPAQDeploy from the Start menu
 4. Go to **Credentials** tab and add domain admin credentials
 5. Go to **Devices** tab, click **Add Hosts**, enter your network range, and click **Scan**
 6. Go to **Groups** tab, create a group, and add devices by model or individually
@@ -88,6 +87,9 @@ dotnet build src/HPPAQDeploy.App/HPPAQDeploy.App.csproj
 
 # Publish self-contained single-file exe
 dotnet publish src/HPPAQDeploy.App/HPPAQDeploy.App.csproj -c Release -o publish
+
+# Build the Windows installer and SHA-256 checksum (requires Inno Setup)
+powershell -ExecutionPolicy Bypass -File scripts/Build-Installer.ps1
 ```
 
 ## License

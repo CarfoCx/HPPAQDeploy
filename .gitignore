@@ -4,6 +4,7 @@ obj/
 publish/
 publish_output/
 /build/
+/artifacts/
 *.user
 *.suo
 .vs/
