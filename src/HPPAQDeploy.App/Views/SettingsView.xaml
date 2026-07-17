@@ -9,7 +9,7 @@
         <converters:InverseBoolToVisibilityConverter x:Key="InverseBoolToVis" />
         <converters:InverseBoolConverter x:Key="InverseBool" />
     </UserControl.Resources>
-    <ScrollViewer VerticalScrollBarVisibility="Auto">
+    <ScrollViewer VerticalScrollBarVisibility="Auto" PanningMode="VerticalOnly">
         <StackPanel MaxWidth="900" HorizontalAlignment="Stretch" Margin="0,0,16,0">
             <TextBlock Text="Settings" Style="{StaticResource PageTitle}" />
             <TextBlock Text="Configure application behavior and integrations" Style="{StaticResource PageSubtitle}" Margin="0,2,0,16" />
@@ -63,6 +63,7 @@
                             </StackPanel>
                             <CheckBox DockPanel.Dock="Right" HorizontalAlignment="Right"
                                       IsChecked="{Binding UseOfflineRepository}"
+                                      AutomationProperties.Name="Use offline repository"
                                       Style="{StaticResource MaterialDesignSwitchToggleButton}" />
                         </DockPanel>
 
@@ -72,6 +73,7 @@
                                        FontSize="12" Foreground="{StaticResource TextSecondaryBrush}" Margin="0,0,0,4" FontStyle="Italic" />
                             <TextBox Text="{Binding RepositorySharePath, UpdateSourceTrigger=PropertyChanged}"
                                      Style="{StaticResource MaterialDesignOutlinedTextBox}"
+                                     AutomationProperties.Name="Repository share path"
                                      Foreground="{StaticResource TextPrimaryBrush}" />
                         </StackPanel>
                     </StackPanel>
@@ -100,6 +102,7 @@
                             <TextBlock Text="Number of simultaneous ping requests during network scan"
                                        FontSize="12" Foreground="{StaticResource TextSecondaryBrush}" Margin="0,2,0,4" FontStyle="Italic" />
                             <Slider Value="{Binding PingConcurrency}" Minimum="16" Maximum="1024"
+                                    AutomationProperties.Name="Ping concurrency"
                                     TickFrequency="16" IsSnapToTickEnabled="True"
                                     Foreground="{StaticResource HpBlueBrush}" />
                         </StackPanel>
@@ -113,6 +116,7 @@
                             <TextBlock Text="Number of simultaneous WMI queries for device discovery"
                                        FontSize="12" Foreground="{StaticResource TextSecondaryBrush}" Margin="0,2,0,4" FontStyle="Italic" />
                             <Slider Value="{Binding WmiConcurrency}" Minimum="1" Maximum="128"
+                                    AutomationProperties.Name="WMI discovery concurrency"
                                     TickFrequency="1" IsSnapToTickEnabled="True"
                                     Foreground="{StaticResource HpBlueBrush}" />
                         </StackPanel>
@@ -126,6 +130,21 @@
                             <TextBlock Text="Number of simultaneous device deployments"
                                        FontSize="12" Foreground="{StaticResource TextSecondaryBrush}" Margin="0,2,0,4" FontStyle="Italic" />
                             <Slider Value="{Binding DeployConcurrency}" Minimum="1" Maximum="50"
+                                    AutomationProperties.Name="Deployment concurrency"
+                                    TickFrequency="1" IsSnapToTickEnabled="True"
+                                     Foreground="{StaticResource HpBlueBrush}" />
+                        </StackPanel>
+
+                        <StackPanel Margin="0,0,0,16">
+                            <DockPanel>
+                                <TextBlock Text="Update Scan Concurrency" Foreground="{StaticResource TextSecondaryBrush}" />
+                                <TextBlock DockPanel.Dock="Right" Text="{Binding ScanConcurrency}"
+                                           FontWeight="Bold" Foreground="{StaticResource HpBlueBrush}" />
+                            </DockPanel>
+                            <TextBlock Text="Number of devices analyzed concurrently when scanning a group for updates"
+                                       FontSize="12" Foreground="{StaticResource TextSecondaryBrush}" Margin="0,2,0,4" FontStyle="Italic" />
+                            <Slider Value="{Binding ScanConcurrency}" Minimum="1" Maximum="50"
+                                    AutomationProperties.Name="Update scan concurrency"
                                     TickFrequency="1" IsSnapToTickEnabled="True"
                                     Foreground="{StaticResource HpBlueBrush}" />
                         </StackPanel>
@@ -150,21 +169,56 @@
                             <TextBlock Text="Ping Timeout (ms)" FontSize="12" Foreground="{StaticResource TextSecondaryBrush}" Margin="0,0,0,4" />
                             <TextBlock Text="How long to wait for a ping response before marking device as offline"
                                        FontSize="12" Foreground="{StaticResource TextSecondaryBrush}" Margin="0,0,0,4" FontStyle="Italic" />
-                            <TextBox Text="{Binding PingTimeoutMs}" Style="{StaticResource MaterialDesignOutlinedTextBox}" Foreground="{StaticResource TextPrimaryBrush}" />
+                            <TextBox Text="{Binding PingTimeoutMs}" Style="{StaticResource MaterialDesignOutlinedTextBox}"
+                                     AutomationProperties.Name="Ping timeout in milliseconds" Foreground="{StaticResource TextPrimaryBrush}" />
+                        </StackPanel>
+
+                        <StackPanel Margin="0,0,0,12">
+                            <TextBlock Text="WMI Timeout (seconds)" FontSize="12" Foreground="{StaticResource TextSecondaryBrush}" Margin="0,0,0,4" />
+                            <TextBlock Text="Maximum time to wait while identifying a device over WMI"
+                                       FontSize="12" Foreground="{StaticResource TextSecondaryBrush}" Margin="0,0,0,4" FontStyle="Italic" />
+                            <TextBox Text="{Binding WmiTimeoutSeconds}" Style="{StaticResource MaterialDesignOutlinedTextBox}"
+                                     AutomationProperties.Name="WMI timeout in seconds" Foreground="{StaticResource TextPrimaryBrush}" />
                         </StackPanel>
 
                         <StackPanel Margin="0,0,0,12">
                             <TextBlock Text="Analysis Timeout (minutes)" FontSize="12" Foreground="{StaticResource TextSecondaryBrush}" Margin="0,0,0,4" />
                             <TextBlock Text="Maximum time to wait for HPIA analysis to complete on a device"
                                        FontSize="12" Foreground="{StaticResource TextSecondaryBrush}" Margin="0,0,0,4" FontStyle="Italic" />
-                            <TextBox Text="{Binding AnalysisTimeoutMinutes}" Style="{StaticResource MaterialDesignOutlinedTextBox}" Foreground="{StaticResource TextPrimaryBrush}" />
+                            <TextBox Text="{Binding AnalysisTimeoutMinutes}" Style="{StaticResource MaterialDesignOutlinedTextBox}"
+                                     AutomationProperties.Name="Analysis timeout in minutes" Foreground="{StaticResource TextPrimaryBrush}" />
                         </StackPanel>
 
                         <StackPanel Margin="0,0,0,12">
                             <TextBlock Text="Deploy Timeout (minutes)" FontSize="12" Foreground="{StaticResource TextSecondaryBrush}" Margin="0,0,0,4" />
                             <TextBlock Text="Maximum time to wait for update installation on a device"
                                        FontSize="12" Foreground="{StaticResource TextSecondaryBrush}" Margin="0,0,0,4" FontStyle="Italic" />
-                            <TextBox Text="{Binding DeployTimeoutMinutes}" Style="{StaticResource MaterialDesignOutlinedTextBox}" Foreground="{StaticResource TextPrimaryBrush}" />
+                            <TextBox Text="{Binding DeployTimeoutMinutes}" Style="{StaticResource MaterialDesignOutlinedTextBox}"
+                                     AutomationProperties.Name="Deployment timeout in minutes" Foreground="{StaticResource TextPrimaryBrush}" />
+                        </StackPanel>
+
+                        <StackPanel Margin="0,0,0,12">
+                            <TextBlock Text="File Transfer Timeout (minutes)" FontSize="12" Foreground="{StaticResource TextSecondaryBrush}" Margin="0,0,0,4" />
+                            <TextBlock Text="Maximum time allowed for each SMB package or report transfer"
+                                       FontSize="12" Foreground="{StaticResource TextSecondaryBrush}" Margin="0,0,0,4" FontStyle="Italic" />
+                            <TextBox Text="{Binding FileTransferTimeoutMinutes}" Style="{StaticResource MaterialDesignOutlinedTextBox}"
+                                     AutomationProperties.Name="File transfer timeout in minutes" Foreground="{StaticResource TextPrimaryBrush}" />
+                        </StackPanel>
+
+                        <StackPanel Margin="0,0,0,12">
+                            <TextBlock Text="Retry Attempts" FontSize="12" Foreground="{StaticResource TextSecondaryBrush}" Margin="0,0,0,4" />
+                            <TextBlock Text="Number of retries for transient network and file-transfer failures"
+                                       FontSize="12" Foreground="{StaticResource TextSecondaryBrush}" Margin="0,0,0,4" FontStyle="Italic" />
+                            <TextBox Text="{Binding RetryMaxAttempts}" Style="{StaticResource MaterialDesignOutlinedTextBox}"
+                                     AutomationProperties.Name="Retry attempts" Foreground="{StaticResource TextPrimaryBrush}" />
+                        </StackPanel>
+
+                        <StackPanel Margin="0,0,0,12">
+                            <TextBlock Text="Retry Base Delay (ms)" FontSize="12" Foreground="{StaticResource TextSecondaryBrush}" Margin="0,0,0,4" />
+                            <TextBlock Text="Initial retry delay; later attempts use exponential backoff"
+                                       FontSize="12" Foreground="{StaticResource TextSecondaryBrush}" Margin="0,0,0,4" FontStyle="Italic" />
+                            <TextBox Text="{Binding RetryBaseDelayMs}" Style="{StaticResource MaterialDesignOutlinedTextBox}"
+                                     AutomationProperties.Name="Retry base delay in milliseconds" Foreground="{StaticResource TextPrimaryBrush}" />
                         </StackPanel>
                     </StackPanel>
                 </Expander>
@@ -188,6 +242,7 @@
                                        VerticalAlignment="Center" />
                             <CheckBox DockPanel.Dock="Right" HorizontalAlignment="Right"
                                       IsChecked="{Binding ScheduledScanEnabled}"
+                                      AutomationProperties.Name="Enable scheduled scans"
                                       Style="{StaticResource MaterialDesignSwitchToggleButton}" />
                         </DockPanel>
 
@@ -196,12 +251,14 @@
                             <TextBlock Text="Network range to scan on schedule (e.g. 10.0.0.0/24)"
                                        FontSize="12" Foreground="{StaticResource TextSecondaryBrush}" Margin="0,0,0,4" FontStyle="Italic" />
                             <TextBox Text="{Binding ScheduledScanCidr, UpdateSourceTrigger=PropertyChanged}"
+                                     AutomationProperties.Name="Scheduled scan CIDR range"
                                      Style="{StaticResource MaterialDesignOutlinedTextBox}" Foreground="{StaticResource TextPrimaryBrush}" />
                         </StackPanel>
 
                         <StackPanel Margin="0,0,0,12">
                             <TextBlock Text="Scan Interval" FontSize="12" Foreground="{StaticResource TextSecondaryBrush}" Margin="0,0,0,4" />
                             <ComboBox ItemsSource="{Binding IntervalOptions}"
+                                      AutomationProperties.Name="Scheduled scan interval"
                                       SelectedItem="{Binding SelectedInterval}"
                                       Style="{StaticResource MaterialDesignOutlinedComboBox}" />
                         </StackPanel>
@@ -234,6 +291,7 @@
                                        VerticalAlignment="Center" />
                             <CheckBox DockPanel.Dock="Right" HorizontalAlignment="Right"
                                       IsChecked="{Binding EmailNotificationsEnabled}"
+                                      AutomationProperties.Name="Enable email notifications"
                                       Style="{StaticResource MaterialDesignSwitchToggleButton}" />
                         </DockPanel>
 
@@ -243,6 +301,7 @@
                         <StackPanel Margin="0,0,0,12">
                             <TextBlock Text="SMTP Server" FontSize="12" Foreground="{StaticResource TextSecondaryBrush}" Margin="0,0,0,4" />
                             <TextBox Text="{Binding SmtpServer, UpdateSourceTrigger=PropertyChanged}"
+                                     AutomationProperties.Name="SMTP server"
                                      Style="{StaticResource MaterialDesignOutlinedTextBox}" Foreground="{StaticResource TextPrimaryBrush}" />
                         </StackPanel>
 
@@ -254,12 +313,14 @@
                             </Grid.ColumnDefinitions>
                             <StackPanel Grid.Column="0">
                                 <TextBlock Text="SMTP Port" FontSize="12" Foreground="{StaticResource TextSecondaryBrush}" Margin="0,0,0,4" />
-                                <TextBox Text="{Binding SmtpPort}" Style="{StaticResource MaterialDesignOutlinedTextBox}" Foreground="{StaticResource TextPrimaryBrush}" />
+                                <TextBox Text="{Binding SmtpPort}" Style="{StaticResource MaterialDesignOutlinedTextBox}"
+                                         AutomationProperties.Name="SMTP port" Foreground="{StaticResource TextPrimaryBrush}" />
                             </StackPanel>
                             <DockPanel Grid.Column="2" VerticalAlignment="Bottom" Margin="0,0,0,8">
                                 <TextBlock Text="Use SSL/TLS" Foreground="{StaticResource TextSecondaryBrush}"
                                            VerticalAlignment="Center" Margin="0,0,8,0" />
                                 <CheckBox IsChecked="{Binding SmtpUseSsl}"
+                                          AutomationProperties.Name="Use SSL or TLS for SMTP"
                                           Style="{StaticResource MaterialDesignSwitchToggleButton}" />
                             </DockPanel>
                         </Grid>
@@ -269,6 +330,7 @@
                             <TextBlock Text="Leave blank if your SMTP server does not require authentication"
                                        FontSize="12" Foreground="{StaticResource TextSecondaryBrush}" Margin="0,0,0,4" FontStyle="Italic" />
                             <TextBox Text="{Binding SmtpUsername, UpdateSourceTrigger=PropertyChanged}"
+                                     AutomationProperties.Name="SMTP username"
                                      Style="{StaticResource MaterialDesignOutlinedTextBox}" Foreground="{StaticResource TextPrimaryBrush}" />
                         </StackPanel>
 
@@ -277,6 +339,7 @@
                             <TextBlock Text="Encrypted with Windows DPAPI when saved"
                                        FontSize="12" Foreground="{StaticResource TextSecondaryBrush}" Margin="0,0,0,4" FontStyle="Italic" />
                             <PasswordBox x:Name="SmtpPasswordBox"
+                                         AutomationProperties.Name="SMTP password"
                                          materialDesign:HintAssist.Hint="SMTP Password"
                                          Style="{StaticResource MaterialDesignOutlinedPasswordBox}"
                                          PasswordChanged="SmtpPasswordBox_PasswordChanged"
@@ -289,6 +352,7 @@
                         <StackPanel Margin="0,0,0,12">
                             <TextBlock Text="From Address" FontSize="12" Foreground="{StaticResource TextSecondaryBrush}" Margin="0,0,0,4" />
                             <TextBox Text="{Binding EmailFrom, UpdateSourceTrigger=PropertyChanged}"
+                                     AutomationProperties.Name="Notification sender address"
                                      Style="{StaticResource MaterialDesignOutlinedTextBox}" Foreground="{StaticResource TextPrimaryBrush}" />
                         </StackPanel>
 
@@ -297,6 +361,7 @@
                             <TextBlock Text="Comma-separated list of email addresses"
                                        FontSize="12" Foreground="{StaticResource TextSecondaryBrush}" Margin="0,0,0,4" FontStyle="Italic" />
                             <TextBox Text="{Binding EmailTo, UpdateSourceTrigger=PropertyChanged}"
+                                     AutomationProperties.Name="Notification recipient addresses"
                                      Style="{StaticResource MaterialDesignOutlinedTextBox}" Foreground="{StaticResource TextPrimaryBrush}" />
                         </StackPanel>
 
@@ -346,7 +411,8 @@
                     <StackPanel Margin="0,8,0,0">
                         <StackPanel Margin="0,0,0,12">
                             <TextBlock Text="HPIA Executable Path" FontSize="12" Foreground="{StaticResource TextSecondaryBrush}" Margin="0,0,0,4" />
-                            <TextBox Text="{Binding HpiaPath}" Style="{StaticResource MaterialDesignOutlinedTextBox}" Foreground="{StaticResource TextPrimaryBrush}" IsReadOnly="True" />
+                            <TextBox Text="{Binding HpiaPath}" Style="{StaticResource MaterialDesignOutlinedTextBox}"
+                                     AutomationProperties.Name="HPIA executable path" Foreground="{StaticResource TextPrimaryBrush}" IsReadOnly="True" />
                         </StackPanel>
 
                         <StackPanel Margin="0,0,0,12">
@@ -354,6 +420,7 @@
                             <TextBlock Text="Local folder where downloaded SoftPaqs are stored during deployment"
                                        FontSize="12" Foreground="{StaticResource TextSecondaryBrush}" Margin="0,0,0,4" FontStyle="Italic" />
                             <TextBox Text="{Binding RepositoryPath, UpdateSourceTrigger=PropertyChanged}" 
+                                     AutomationProperties.Name="Repository directory path"
                                      Style="{StaticResource MaterialDesignOutlinedTextBox}" 
                                      Foreground="{StaticResource TextPrimaryBrush}" />
                         </StackPanel>
@@ -378,16 +445,23 @@
                                    FontSize="12" Foreground="{StaticResource TextSecondaryBrush}" FontStyle="Italic" Margin="0,0,0,12" />
 
                         <!-- Add new password -->
-                        <DockPanel Margin="0,0,0,12">
-                            <Button DockPanel.Dock="Right" Content="Add"
-                                    Command="{Binding AddBiosPasswordCommand}"
-                                    Style="{StaticResource PrimaryButton}"
-                                    Padding="16,6" Height="36" Margin="8,0,0,0" />
-                            <TextBox Text="{Binding NewBiosPassword, UpdateSourceTrigger=PropertyChanged}"
-                                     materialDesign:HintAssist.Hint="Enter BIOS password"
-                                     Style="{StaticResource MaterialDesignOutlinedTextBox}"
-                                     Foreground="{StaticResource TextPrimaryBrush}" />
-                        </DockPanel>
+                        <Grid Margin="0,0,0,12">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <PasswordBox x:Name="BiosPasswordBox"
+                                         Grid.Column="0"
+                                         PasswordChanged="BiosPasswordBox_PasswordChanged"
+                                         AutomationProperties.Name="New BIOS password"
+                                         materialDesign:HintAssist.Hint="Enter BIOS password"
+                                         Style="{StaticResource MaterialDesignOutlinedPasswordBox}"
+                                         Foreground="{StaticResource TextPrimaryBrush}" />
+                            <Button Grid.Column="1" Content="Add"
+                                     Command="{Binding AddBiosPasswordCommand}"
+                                     Style="{StaticResource PrimaryButton}"
+                                     Padding="16,6" Height="36" Margin="8,0,0,0" />
+                        </Grid>
 
                         <!-- Password list -->
                         <ItemsControl ItemsSource="{Binding BiosPasswords}">
@@ -436,7 +510,8 @@
             </StackPanel>
 
             <TextBlock Text="{Binding StatusMessage}" FontSize="13" FontWeight="SemiBold"
-                       Foreground="{StaticResource AccentGreenBrush}" Margin="0,4,0,0" />
+                       Foreground="{StaticResource AccentGreenBrush}" Margin="0,4,0,0"
+                       AutomationProperties.LiveSetting="Polite" />
         </StackPanel>
     </ScrollViewer>
 </UserControl>

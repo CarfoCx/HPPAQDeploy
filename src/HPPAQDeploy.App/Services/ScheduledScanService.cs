@@ -1,4 +1,5 @@
 using System.ComponentModel;
+using System.Collections.Concurrent;
 using System.Net;
 using HPPAQDeploy.Core.Interfaces;
 using HPPAQDeploy.Core.Models;
@@ -13,8 +14,12 @@ public class ScheduledScanService : INotifyPropertyChanged, IDisposable
     private readonly IDeviceDiscovery _deviceDiscovery;
     private readonly ICredentialStore _credentialStore;
     private readonly IDeviceRepository _deviceRepository;
+    private readonly SynchronizationContext? _synchronizationContext;
+    private readonly SemaphoreSlim _runGate = new(1, 1);
+    private readonly object _lifecycleLock = new();
     private Timer? _timer;
-    private bool _isRunning;
+    private CancellationTokenSource? _scheduleCts;
+    private DateTime _scheduleBaseline = DateTime.Now;
     private bool _disposed;
 
     public event PropertyChangedEventHandler? PropertyChanged;
@@ -42,8 +47,7 @@ public class ScheduledScanService : INotifyPropertyChanged, IDisposable
             if (LastScanTime.HasValue)
                 return LastScanTime.Value + AppSettings.ScheduledScanInterval;
 
-            // If never scanned, next scan is now + interval from app start
-            return DateTime.Now + AppSettings.ScheduledScanInterval;
+            return _scheduleBaseline + AppSettings.ScheduledScanInterval;
         }
     }
 
@@ -71,14 +75,29 @@ public class ScheduledScanService : INotifyPropertyChanged, IDisposable
         _deviceDiscovery = deviceDiscovery;
         _credentialStore = credentialStore;
         _deviceRepository = deviceRepository;
+        _synchronizationContext = SynchronizationContext.Current;
         _lastScanTime = AppSettings.LastScheduledScan;
     }
 
     public void Start()
     {
-        _timer?.Dispose();
-        // Check every 60 seconds if a scan is due
-        _timer = new Timer(OnTimerElapsed, null, TimeSpan.FromSeconds(10), TimeSpan.FromSeconds(60));
+        lock (_lifecycleLock)
+        {
+            ObjectDisposedException.ThrowIf(_disposed, this);
+
+            _timer?.Dispose();
+            _scheduleCts?.Cancel();
+            _scheduleCts?.Dispose();
+            _scheduleCts = new CancellationTokenSource();
+
+            // Check every 60 seconds if a scan is due.
+            _timer = new Timer(
+                OnTimerElapsed,
+                _scheduleCts.Token,
+                TimeSpan.FromSeconds(10),
+                TimeSpan.FromSeconds(60));
+        }
+
         Log.Information("Scheduled scan service started. Enabled={Enabled}, Interval={Interval}h, CIDR={Cidr}",
             AppSettings.ScheduledScanEnabled, AppSettings.ScheduledScanInterval.TotalHours, AppSettings.ScheduledScanCidr);
     }
@@ -86,34 +105,46 @@ public class ScheduledScanService : INotifyPropertyChanged, IDisposable
     public void Restart()
     {
         _lastScanTime = AppSettings.LastScheduledScan;
+        _scheduleBaseline = DateTime.Now;
         OnPropertyChanged(nameof(LastScanTime));
         OnPropertyChanged(nameof(NextScanTime));
         OnPropertyChanged(nameof(ScheduleStatusText));
         Start();
     }
 
-    private async void OnTimerElapsed(object? state)
+    private void OnTimerElapsed(object? state)
     {
-        if (_isRunning || !AppSettings.ScheduledScanEnabled)
+        if (state is not CancellationToken scheduleToken || scheduleToken.IsCancellationRequested)
             return;
 
-        if (string.IsNullOrWhiteSpace(AppSettings.ScheduledScanCidr))
+        _ = CheckAndRunScanAsync(scheduleToken);
+    }
+
+    private async Task CheckAndRunScanAsync(CancellationToken scheduleToken)
+    {
+        if (!AppSettings.ScheduledScanEnabled || string.IsNullOrWhiteSpace(AppSettings.ScheduledScanCidr))
             return;
 
         var now = DateTime.Now;
-        if (LastScanTime.HasValue && (now - LastScanTime.Value) < AppSettings.ScheduledScanInterval)
+        var nextScan = NextScanTime;
+        if (nextScan.HasValue && now < nextScan.Value)
             return;
 
-        // A scan is due
-        _isRunning = true;
+        if (!await _runGate.WaitAsync(0).ConfigureAwait(false))
+            return;
+
         try
         {
             Log.Information("Scheduled scan starting for CIDR {Cidr}", AppSettings.ScheduledScanCidr);
-            await RunScanAsync();
+            await RunScanAsync(scheduleToken).ConfigureAwait(false);
             LastScanTime = DateTime.Now;
             AppSettings.LastScheduledScan = LastScanTime;
             AppSettings.Save();
             Log.Information("Scheduled scan completed at {Time}", LastScanTime);
+        }
+        catch (OperationCanceledException) when (scheduleToken.IsCancellationRequested)
+        {
+            Log.Information("Scheduled scan cancelled");
         }
         catch (Exception ex)
         {
@@ -121,14 +152,15 @@ public class ScheduledScanService : INotifyPropertyChanged, IDisposable
         }
         finally
         {
-            _isRunning = false;
+            _runGate.Release();
         }
     }
 
-    private async Task RunScanAsync()
+    private async Task RunScanAsync(CancellationToken scheduleToken)
     {
         var cidr = new CidrRange(AppSettings.ScheduledScanCidr);
-        var cts = new CancellationTokenSource(TimeSpan.FromMinutes(30));
+        using var timeoutCts = new CancellationTokenSource(TimeSpan.FromMinutes(30));
+        using var cts = CancellationTokenSource.CreateLinkedTokenSource(scheduleToken, timeoutCts.Token);
         var progress = new Progress<(int completed, int total)>();
 
         // Phase 1: Ping sweep
@@ -157,18 +189,23 @@ public class ScheduledScanService : INotifyPropertyChanged, IDisposable
         var networkCred = await _credentialStore.DecryptAsync(defaultCred);
 
         // Phase 2: WMI discovery
-        var semaphore = new SemaphoreSlim(AppSettings.DefaultWmiConcurrency);
+        using var discoverySemaphore = new SemaphoreSlim(AppSettings.DefaultWmiConcurrency);
+        var discoveredDevices = new ConcurrentBag<Device>();
         var tasks = aliveHosts.Select(async ip =>
         {
-            await semaphore.WaitAsync(cts.Token);
+            await discoverySemaphore.WaitAsync(cts.Token).ConfigureAwait(false);
             try
             {
-                var device = await _deviceDiscovery.IdentifyDeviceAsync(ip, networkCred, cts.Token);
+                var device = await _deviceDiscovery.IdentifyDeviceAsync(ip, networkCred, cts.Token).ConfigureAwait(false);
                 if (device != null)
                 {
                     device.LastScanned = DateTime.Now;
-                    await _deviceRepository.UpsertAsync(device, cts.Token);
+                    discoveredDevices.Add(device);
                 }
+            }
+            catch (OperationCanceledException) when (cts.IsCancellationRequested)
+            {
+                throw;
             }
             catch (Exception ex)
             {
@@ -176,22 +213,48 @@ public class ScheduledScanService : INotifyPropertyChanged, IDisposable
             }
             finally
             {
-                semaphore.Release();
+                discoverySemaphore.Release();
             }
         });
 
-        await Task.WhenAll(tasks);
+        try
+        {
+            await Task.WhenAll(tasks).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException)
+        {
+            if (!discoveredDevices.IsEmpty)
+                await _deviceRepository.BatchUpsertAsync(discoveredDevices, CancellationToken.None).ConfigureAwait(false);
+            throw;
+        }
+
+        if (!discoveredDevices.IsEmpty)
+            await _deviceRepository.BatchUpsertAsync(discoveredDevices, cts.Token).ConfigureAwait(false);
     }
 
     private void OnPropertyChanged(string propertyName)
     {
-        PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(propertyName));
+        var args = new PropertyChangedEventArgs(propertyName);
+        if (_synchronizationContext is not null && SynchronizationContext.Current != _synchronizationContext)
+        {
+            _synchronizationContext.Post(_ => PropertyChanged?.Invoke(this, args), null);
+            return;
+        }
+
+        PropertyChanged?.Invoke(this, args);
     }
 
     public void Dispose()
     {
-        if (_disposed) return;
-        _disposed = true;
-        _timer?.Dispose();
+        lock (_lifecycleLock)
+        {
+            if (_disposed) return;
+            _disposed = true;
+            _timer?.Dispose();
+            _timer = null;
+            _scheduleCts?.Cancel();
+            _scheduleCts?.Dispose();
+            _scheduleCts = null;
+        }
     }
 }

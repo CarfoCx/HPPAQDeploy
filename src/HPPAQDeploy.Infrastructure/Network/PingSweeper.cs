@@ -22,56 +22,81 @@ public class PingSweeper : INetworkScanner
         IProgress<(int completed, int total)> progress,
         [EnumeratorCancellation] CancellationToken ct)
     {
-        var channel = Channel.CreateBounded<ScanResult>(new BoundedChannelOptions(1024)
+        ArgumentNullException.ThrowIfNull(range);
+        if (maxConcurrency <= 0 || maxConcurrency > 4096)
+            throw new ArgumentOutOfRangeException(nameof(maxConcurrency));
+
+        var channel = Channel.CreateBounded<ScanResult>(new BoundedChannelOptions(Math.Max(1, maxConcurrency * 2))
         {
             SingleWriter = false,
             SingleReader = true,
             FullMode = BoundedChannelFullMode.Wait
         });
 
-        var hosts = range.GetAllHosts().ToList();
-        int total = hosts.Count;
+        int total = range.UsableHostCount;
         int completed = 0;
 
         _logger.Information("Starting ping sweep of {Range} ({Total} hosts, concurrency={Concurrency})",
             range.Network, total, maxConcurrency);
 
-        var producerTask = Task.Run(async () =>
-        {
-            var semaphore = new SemaphoreSlim(maxConcurrency, maxConcurrency);
-            var tasks = new List<Task>();
+        using var producerCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        var producerTask = ProduceResultsAsync(producerCts.Token);
 
-            foreach (var ip in hosts)
+        async Task ProduceResultsAsync(CancellationToken producerToken)
+        {
+            try
             {
-                ct.ThrowIfCancellationRequested();
-                await semaphore.WaitAsync(ct).ConfigureAwait(false);
-
-                tasks.Add(Task.Run(async () =>
-                {
-                    try
+                await Parallel.ForEachAsync(
+                    range.GetAllHosts(),
+                    new ParallelOptions
                     {
-                        var result = await PingHostAsync(ip, ct).ConfigureAwait(false);
-                        await channel.Writer.WriteAsync(result, ct).ConfigureAwait(false);
-                    }
-                    finally
+                        MaxDegreeOfParallelism = maxConcurrency,
+                        CancellationToken = producerToken
+                    },
+                    async (ip, token) =>
                     {
-                        semaphore.Release();
-                        var current = Interlocked.Increment(ref completed);
-                        progress?.Report((current, total));
-                    }
-                }, ct));
+                        try
+                        {
+                            var result = await PingHostAsync(ip, token).ConfigureAwait(false);
+                            await channel.Writer.WriteAsync(result, token).ConfigureAwait(false);
+                        }
+                        finally
+                        {
+                            var current = Interlocked.Increment(ref completed);
+                            progress?.Report((current, total));
+                        }
+                    }).ConfigureAwait(false);
             }
-
-            await Task.WhenAll(tasks).ConfigureAwait(false);
-            channel.Writer.Complete();
-        }, ct);
-
-        await foreach (var result in channel.Reader.ReadAllAsync(ct).ConfigureAwait(false))
-        {
-            yield return result;
+            finally
+            {
+                channel.Writer.TryComplete();
+            }
         }
 
-        await producerTask.ConfigureAwait(false);
+        try
+        {
+            await foreach (var result in channel.Reader.ReadAllAsync(producerCts.Token).ConfigureAwait(false))
+            {
+                yield return result;
+            }
+
+            await producerTask.ConfigureAwait(false);
+        }
+        finally
+        {
+            if (!producerTask.IsCompleted)
+            {
+                producerCts.Cancel();
+                try
+                {
+                    await producerTask.ConfigureAwait(false);
+                }
+                catch (OperationCanceledException) when (producerCts.IsCancellationRequested)
+                {
+                    // The consumer stopped enumerating before the sweep completed.
+                }
+            }
+        }
     }
 
     private async Task<ScanResult> PingHostAsync(IPAddress ip, CancellationToken ct)
@@ -79,15 +104,23 @@ public class PingSweeper : INetworkScanner
         using var ping = new Ping();
         try
         {
-            var reply = await ping.SendPingAsync(ip, AppSettings.PingTimeoutMs).ConfigureAwait(false);
+            var reply = await ping.SendPingAsync(ip, AppSettings.PingTimeoutMs)
+                .WaitAsync(ct)
+                .ConfigureAwait(false);
 
             string? hostname = null;
             if (reply.Status == IPStatus.Success)
             {
                 try
                 {
-                    var hostEntry = await Dns.GetHostEntryAsync(ip).ConfigureAwait(false);
+                    var hostEntry = await Dns.GetHostEntryAsync(ip)
+                        .WaitAsync(ct)
+                        .ConfigureAwait(false);
                     hostname = hostEntry.HostName;
+                }
+                catch (OperationCanceledException)
+                {
+                    throw;
                 }
                 catch
                 {

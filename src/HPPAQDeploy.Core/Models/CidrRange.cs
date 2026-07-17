@@ -1,4 +1,5 @@
 using System.Net;
+using System.Net.Sockets;
 
 namespace HPPAQDeploy.Core.Models;
 
@@ -15,7 +16,8 @@ public class CidrRange
 
     public CidrRange(string cidrNotation)
     {
-        Network = cidrNotation ?? throw new ArgumentNullException(nameof(cidrNotation));
+        ArgumentException.ThrowIfNullOrWhiteSpace(cidrNotation);
+        Network = cidrNotation;
 
         var parts = cidrNotation.Split('/');
         if (parts.Length != 2)
@@ -23,6 +25,8 @@ public class CidrRange
 
         if (!IPAddress.TryParse(parts[0], out var ipAddress))
             throw new FormatException($"Invalid IP address: {parts[0]}");
+        if (ipAddress.AddressFamily != AddressFamily.InterNetwork)
+            throw new FormatException("Only IPv4 CIDR ranges are supported.");
 
         if (!int.TryParse(parts[1], out var prefixLength) || prefixLength < 0 || prefixLength > 32)
             throw new FormatException($"Invalid prefix length: {parts[1]}");
@@ -37,21 +41,11 @@ public class CidrRange
         StartAddress = UintToIp(_networkUint);
         EndAddress = UintToIp(_broadcastUint);
 
-        // Total usable hosts: exclude network and broadcast for prefixes <= 30
-        if (prefixLength <= 30)
-        {
-            TotalHosts = (int)(_broadcastUint - _networkUint + 1);
-        }
-        else if (prefixLength == 31)
-        {
-            // Point-to-point link per RFC 3021
-            TotalHosts = 2;
-        }
-        else
-        {
-            // /32 - single host
-            TotalHosts = 1;
-        }
+        var addressCount = (ulong)_broadcastUint - _networkUint + 1;
+        if (addressCount > int.MaxValue)
+            throw new FormatException("IPv4 ranges broader than /2 are too large for a single scan.");
+
+        TotalHosts = (int)addressCount;
 
         UsableHostCount = _broadcastUint - _networkUint <= 1
             ? TotalHosts
@@ -64,10 +58,9 @@ public class CidrRange
         // For wider ranges, skip network address and broadcast address
         if (_broadcastUint - _networkUint <= 1)
         {
-            for (uint i = _networkUint; i <= _broadcastUint; i++)
-            {
-                yield return UintToIp(i);
-            }
+            yield return UintToIp(_networkUint);
+            if (_broadcastUint != _networkUint)
+                yield return UintToIp(_broadcastUint);
         }
         else
         {
@@ -82,6 +75,7 @@ public class CidrRange
     public bool Contains(string ipAddress)
     {
         if (!IPAddress.TryParse(ipAddress, out var ip)) return false;
+        if (ip.AddressFamily != AddressFamily.InterNetwork) return false;
         var bytes = ip.GetAddressBytes();
         uint ipUint = (uint)(bytes[0] << 24 | bytes[1] << 16 | bytes[2] << 8 | bytes[3]);
         return ipUint >= _networkUint && ipUint <= _broadcastUint;

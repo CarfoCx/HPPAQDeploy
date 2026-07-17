@@ -16,6 +16,7 @@ public partial class GroupsViewModel : ObservableObject
 
     private readonly IDeviceGroupRepository _groupRepository;
     private readonly IDeviceRepository _deviceRepository;
+    private readonly SemaphoreSlim _loadGate = new(1, 1);
 
     [ObservableProperty] private ObservableCollection<GroupItem> _groups = [];
     [ObservableProperty] private GroupItem? _selectedGroup;
@@ -67,7 +68,6 @@ public partial class GroupsViewModel : ObservableObject
     private async Task InitializeAsync()
     {
         await LoadGroupsAsync();
-        await LoadAvailableDevicesAsync();
     }
 
     partial void OnSelectedGroupChanged(GroupItem? value)
@@ -80,33 +80,45 @@ public partial class GroupsViewModel : ObservableObject
     [RelayCommand]
     private async Task LoadGroupsAsync()
     {
+        if (!await _loadGate.WaitAsync(0))
+            return;
+
         IsLoading = true;
         try
         {
-            var groups = await _groupRepository.GetAllAsync();
-            var items = new ObservableCollection<GroupItem>();
-            foreach (var g in groups)
+            var groupsTask = _groupRepository.GetAllAsync();
+            var devicesTask = _deviceRepository.GetAllAsync();
+            await Task.WhenAll(groupsTask, devicesTask);
+
+            var groups = await groupsTask;
+            var devices = (await devicesTask).ToList();
+            var deviceCounts = devices
+                .Where(device => !string.IsNullOrWhiteSpace(device.GroupName))
+                .GroupBy(device => device.GroupName!, StringComparer.OrdinalIgnoreCase)
+                .ToDictionary(group => group.Key, group => group.Count(), StringComparer.OrdinalIgnoreCase);
+
+            var items = new ObservableCollection<GroupItem>(groups.Select(group =>
             {
-                var devices = await _deviceRepository.GetByGroupAsync(g.Name);
-                items.Add(new GroupItem
+                deviceCounts.TryGetValue(group.Name, out var deviceCount);
+                return new GroupItem
                 {
-                    Name = g.Name,
-                    Description = g.Description,
-                    Created = g.Created,
-                    DeviceCount = devices.Count
-                });
-            }
+                    Name = group.Name,
+                    Description = group.Description,
+                    Created = group.Created,
+                    DeviceCount = deviceCount
+                };
+            }));
             Groups = items;
             OnPropertyChanged(nameof(TotalDevicesInGroups));
 
+            ApplyAvailableDevices(devices);
+
             if (SelectedGroup is not null)
             {
-                var match = Groups.FirstOrDefault(g => g.Name == SelectedGroup.Name);
+                var match = Groups.FirstOrDefault(g =>
+                    g.Name.Equals(SelectedGroup.Name, StringComparison.OrdinalIgnoreCase));
                 SelectedGroup = match;
             }
-
-            // Also refresh available devices list
-            await LoadAvailableDevicesAsync();
         }
         catch (Exception ex)
         {
@@ -117,13 +129,15 @@ public partial class GroupsViewModel : ObservableObject
         finally
         {
             IsLoading = false;
+            _loadGate.Release();
         }
     }
 
     [RelayCommand]
     private async Task LoadGroupDevicesAsync()
     {
-        if (SelectedGroup is null)
+        var selectedGroup = SelectedGroup;
+        if (selectedGroup is null)
         {
             GroupDevices = [];
             return;
@@ -131,7 +145,10 @@ public partial class GroupsViewModel : ObservableObject
 
         try
         {
-            var devices = await _deviceRepository.GetByGroupAsync(SelectedGroup.Name);
+            var devices = await _deviceRepository.GetByGroupAsync(selectedGroup.Name);
+            if (!ReferenceEquals(SelectedGroup, selectedGroup))
+                return;
+
             GroupDevices = new ObservableCollection<Device>(devices);
         }
         catch (Exception ex)
@@ -147,23 +164,27 @@ public partial class GroupsViewModel : ObservableObject
     {
         try
         {
-            _allDevices = (await _deviceRepository.GetAllAsync()).ToList();
-            FilterAvailableDevices();
-
-            // Build unique model list from ALL devices (not just ungrouped)
-            var models = _allDevices
-                .Select(d => d.Model)
-                .Where(m => !string.IsNullOrWhiteSpace(m))
-                .Distinct(StringComparer.OrdinalIgnoreCase)
-                .OrderBy(m => m)
-                .ToList();
-            AvailableModels = new ObservableCollection<string>(models);
+            ApplyAvailableDevices((await _deviceRepository.GetAllAsync()).ToList());
         }
         catch (Exception ex)
         {
             Log.Error(ex, "Failed to load available devices");
             SnackbarService.ShowError("Failed to load available devices.");
         }
+    }
+
+    private void ApplyAvailableDevices(List<Device> devices)
+    {
+        _allDevices = devices;
+        FilterAvailableDevices();
+
+        var models = devices
+            .Select(device => device.Model)
+            .Where(model => !string.IsNullOrWhiteSpace(model))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .OrderBy(model => model)
+            .ToList();
+        AvailableModels = new ObservableCollection<string>(models);
     }
 
     [RelayCommand]
@@ -239,8 +260,8 @@ public partial class GroupsViewModel : ObservableObject
         if (deviceToAssign is null && !string.IsNullOrWhiteSpace(DeviceSearchText))
         {
             var text = DeviceSearchText.Trim();
-            deviceToAssign = FilteredAvailableDevices.FirstOrDefault(d => 
-                string.Equals(d.Hostname, text, StringComparison.OrdinalIgnoreCase) || 
+            deviceToAssign = FilteredAvailableDevices.FirstOrDefault(d =>
+                string.Equals(d.Hostname, text, StringComparison.OrdinalIgnoreCase) ||
                 string.Equals(d.IpAddress, text, StringComparison.OrdinalIgnoreCase))
                 ?? FilteredAvailableDevices.FirstOrDefault();
         }

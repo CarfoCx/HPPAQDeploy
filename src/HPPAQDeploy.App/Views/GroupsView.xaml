@@ -68,22 +68,26 @@
                         <ColumnDefinition Width="2*" />
                     </Grid.ColumnDefinitions>
                     <StackPanel Grid.Column="0">
-                        <TextBlock Text="Group Name" Style="{StaticResource CaptionText}" Margin="0,0,0,4" />
+                        <TextBlock x:Name="NewGroupNameText" Text="Group Name" Style="{StaticResource CaptionText}" Margin="0,0,0,4" />
                         <TextBox Text="{Binding NewGroupName, UpdateSourceTrigger=PropertyChanged}"
-                                 Style="{StaticResource AppTextBox}" />
+                                 Style="{StaticResource AppTextBox}"
+                                 AutomationProperties.LabeledBy="{Binding ElementName=NewGroupNameText}" />
                     </StackPanel>
                     <StackPanel Grid.Column="2">
-                        <TextBlock Text="Description (optional)" Style="{StaticResource CaptionText}" Margin="0,0,0,4" />
+                        <TextBlock x:Name="NewGroupDescriptionText" Text="Description (optional)" Style="{StaticResource CaptionText}" Margin="0,0,0,4" />
                         <TextBox Text="{Binding NewGroupDescription, UpdateSourceTrigger=PropertyChanged}"
-                                 Style="{StaticResource AppTextBox}" />
+                                 Style="{StaticResource AppTextBox}"
+                                 AutomationProperties.LabeledBy="{Binding ElementName=NewGroupDescriptionText}" />
                     </StackPanel>
                 </Grid>
                 <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
                     <Button Content="Cancel" Command="{Binding ToggleCreateFormCommand}"
                             Style="{StaticResource SecondaryButton}"
+                            IsCancel="True"
                             Height="28" Padding="20,4" Margin="0,0,8,0" />
                     <Button Command="{Binding CreateGroupCommand}"
                             Style="{StaticResource SuccessButton}"
+                            IsDefault="True"
                             Height="28" Padding="20,4">
                         <StackPanel Orientation="Horizontal">
                             <materialDesign:PackIcon Kind="Check" Width="16" Height="16"
@@ -131,6 +135,10 @@
                               SelectedItem="{Binding SelectedGroup}"
                               Visibility="{Binding Groups.Count, Converter={StaticResource NonZeroToVis}}"
                               Background="Transparent" BorderThickness="0"
+                              AutomationProperties.Name="Device groups"
+                              ScrollViewer.CanContentScroll="True"
+                              VirtualizingStackPanel.IsVirtualizing="True"
+                              VirtualizingStackPanel.VirtualizationMode="Recycling"
                               ScrollViewer.HorizontalScrollBarVisibility="Disabled">
                         <ListView.ItemContainerStyle>
                             <Style TargetType="ListViewItem" BasedOn="{StaticResource MaterialDesignListBoxItem}">
@@ -245,6 +253,10 @@
                             <ListView ItemsSource="{Binding GroupDevices}"
                                       Visibility="{Binding GroupDevices.Count, Converter={StaticResource NonZeroToVis}}"
                                       Background="Transparent" BorderThickness="0"
+                                      AutomationProperties.Name="Devices in selected group"
+                                      ScrollViewer.CanContentScroll="True"
+                                      VirtualizingStackPanel.IsVirtualizing="True"
+                                      VirtualizingStackPanel.VirtualizationMode="Recycling"
                                       ScrollViewer.HorizontalScrollBarVisibility="Disabled">
                                 <ListView.ItemContainerStyle>
                                     <Style TargetType="ListViewItem" BasedOn="{StaticResource MaterialDesignListBoxItem}">
@@ -346,6 +358,10 @@
                                 <ListView ItemsSource="{Binding FilteredAvailableDevices}"
                                           SelectedItem="{Binding SelectedAvailableDevice, Mode=TwoWay}"
                                           Background="Transparent" BorderThickness="0"
+                                          AutomationProperties.Name="Available devices"
+                                          ScrollViewer.CanContentScroll="True"
+                                          VirtualizingStackPanel.IsVirtualizing="True"
+                                          VirtualizingStackPanel.VirtualizationMode="Recycling"
                                           MaxHeight="120"
                                           ScrollViewer.HorizontalScrollBarVisibility="Disabled">
                                     <ListView.ItemContainerStyle>

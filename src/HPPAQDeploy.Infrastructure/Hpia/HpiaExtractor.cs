@@ -59,18 +59,7 @@ public class HpiaExtractor
         using var process = Process.Start(psi)
             ?? throw new InvalidOperationException($"Failed to start HPIA extraction process from {installerPath}");
 
-        try
-        {
-            await process.WaitForExitAsync(ct).ConfigureAwait(false);
-        }
-        catch (OperationCanceledException)
-        {
-            process.Kill(entireProcessTree: true);
-            throw;
-        }
-
-        var stdout = await process.StandardOutput.ReadToEndAsync(ct).ConfigureAwait(false);
-        var stderr = await process.StandardError.ReadToEndAsync(ct).ConfigureAwait(false);
+        var (stdout, stderr) = await WaitForExitAndCaptureAsync(process, ct).ConfigureAwait(false);
         _logger.Information("HPIA extraction process exited with code {ExitCode}. Output: {Output} {Error}",
             process.ExitCode, stdout.Trim(), stderr.Trim());
 
@@ -104,15 +93,7 @@ public class HpiaExtractor
         using var process2 = Process.Start(psi2)
             ?? throw new InvalidOperationException("Failed to start HPIA extraction (retry).");
 
-        try
-        {
-            await process2.WaitForExitAsync(ct).ConfigureAwait(false);
-        }
-        catch (OperationCanceledException)
-        {
-            process2.Kill(entireProcessTree: true);
-            throw;
-        }
+        await WaitForExitAndCaptureAsync(process2, ct).ConfigureAwait(false);
 
         await Task.Delay(1500, ct).ConfigureAwait(false);
 
@@ -149,6 +130,55 @@ public class HpiaExtractor
         catch
         {
             return null;
+        }
+    }
+
+    private static async Task<(string Output, string Error)> WaitForExitAndCaptureAsync(
+        Process process,
+        CancellationToken ct)
+    {
+        // Drain both pipes while the process runs; waiting first can deadlock once
+        // either redirected pipe reaches its OS buffer limit.
+        var outputTask = process.StandardOutput.ReadToEndAsync(ct);
+        var errorTask = process.StandardError.ReadToEndAsync(ct);
+        try
+        {
+            await process.WaitForExitAsync(ct).ConfigureAwait(false);
+            return (
+                await outputTask.ConfigureAwait(false),
+                await errorTask.ConfigureAwait(false));
+        }
+        catch (OperationCanceledException)
+        {
+            TryKill(process);
+            try
+            {
+                await process.WaitForExitAsync(CancellationToken.None)
+                    .WaitAsync(TimeSpan.FromSeconds(10))
+                    .ConfigureAwait(false);
+            }
+            catch (TimeoutException)
+            {
+                // Cancellation must not hang indefinitely if Windows cannot reap the process.
+            }
+            throw;
+        }
+    }
+
+    private static void TryKill(Process process)
+    {
+        try
+        {
+            if (!process.HasExited)
+                process.Kill(entireProcessTree: true);
+        }
+        catch (InvalidOperationException)
+        {
+            // The process exited between HasExited and Kill.
+        }
+        catch (System.ComponentModel.Win32Exception)
+        {
+            // Best effort during cancellation.
         }
     }
 }

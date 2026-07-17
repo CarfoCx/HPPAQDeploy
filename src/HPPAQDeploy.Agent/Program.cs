@@ -45,10 +45,25 @@ internal static class Program
         try
         {
             var mode = args.FirstOrDefault()?.ToLowerInvariant() ?? "run-once";
+
+            if (mode is "watch" or "run-once")
+            {
+                using var runnerLease = TryAcquireRunnerLease();
+                if (runnerLease is null)
+                {
+                    Log.Information("Another agent process is already running; no work was started");
+                    return 0;
+                }
+
+                RecoverInterruptedJobs();
+
+                return mode == "watch"
+                    ? await WatchAsync()
+                    : await RunOnceAsync();
+            }
+
             return mode switch
             {
-                "watch" => await WatchAsync(),
-                "run-once" => await RunOnceAsync(),
                 "status" => WriteStatus(),
                 _ => Usage()
             };
@@ -83,6 +98,25 @@ internal static class Program
         return 0;
     }
 
+    private static FileStream? TryAcquireRunnerLease()
+    {
+        var leasePath = Path.Combine(AgentRoot, "agent.lock");
+        try
+        {
+            return new FileStream(
+                leasePath,
+                FileMode.OpenOrCreate,
+                FileAccess.ReadWrite,
+                FileShare.None,
+                bufferSize: 1,
+                FileOptions.DeleteOnClose);
+        }
+        catch (IOException)
+        {
+            return null;
+        }
+    }
+
     private static async Task<int> WatchAsync()
     {
         Log.Information("HPPAQDeploy agent watch started at {Root}", AgentRoot);
@@ -107,16 +141,50 @@ internal static class Program
         return 0;
     }
 
+    private static void RecoverInterruptedJobs()
+    {
+        foreach (var runningPath in Directory.GetFiles(JobsPath, "*.running"))
+        {
+            var jobPath = Path.ChangeExtension(runningPath, ".json");
+            if (File.Exists(jobPath))
+            {
+                Log.Warning(
+                    "Cannot recover interrupted job {RunningPath} because {JobPath} already exists",
+                    runningPath,
+                    jobPath);
+                continue;
+            }
+
+            File.Move(runningPath, jobPath);
+            Log.Warning("Recovered interrupted agent job {JobPath}", jobPath);
+        }
+    }
+
     private static async Task ProcessJobFileAsync(string jobFile)
     {
         AgentJob? job = null;
+        var runningPath = Path.ChangeExtension(jobFile, ".running");
+        var claimed = false;
+        var resultPublished = false;
+
         try
         {
-            job = JsonSerializer.Deserialize<AgentJob>(await File.ReadAllTextAsync(jobFile), JsonOptions)
+            // Claim the job before reading it. Multiple scheduled-task invocations can
+            // overlap, and only the process that wins this atomic move may execute it.
+            File.Move(jobFile, runningPath);
+            claimed = true;
+
+            job = JsonSerializer.Deserialize<AgentJob>(await File.ReadAllTextAsync(runningPath), JsonOptions)
                 ?? throw new InvalidOperationException("Job file is empty or invalid.");
 
-            var runningPath = Path.ChangeExtension(jobFile, ".running");
-            File.Move(jobFile, runningPath, overwrite: true);
+            ValidateJobId(job.Id);
+            if (!string.Equals(
+                    Path.GetFileNameWithoutExtension(jobFile),
+                    job.Id,
+                    StringComparison.Ordinal))
+            {
+                throw new InvalidDataException("The job ID does not match its file name.");
+            }
 
             Log.Information("Processing agent job {JobId} ({Type})", job.Id, job.Type);
             var result = job.Type switch
@@ -128,23 +196,44 @@ internal static class Program
             };
 
             await WriteResultAsync(result);
-            File.Delete(runningPath);
+            resultPublished = true;
+        }
+        catch (IOException) when (!claimed && !File.Exists(jobFile))
+        {
+            // Another agent invocation claimed the job first.
+            Log.Debug("Job file {JobFile} was claimed by another agent process", jobFile);
         }
         catch (Exception ex)
         {
             Log.Error(ex, "Failed to process job file {JobFile}", jobFile);
             if (job is not null)
             {
-                await WriteResultAsync(new AgentJobResult
+                try
                 {
-                    JobId = job.Id,
-                    Type = job.Type,
-                    Status = AgentJobStatus.Failed,
-                    StartedUtc = DateTime.UtcNow,
-                    CompletedUtc = DateTime.UtcNow,
-                    ExitCode = -1,
-                    Message = ex.Message
-                });
+                    await WriteResultAsync(new AgentJobResult
+                    {
+                        JobId = job.Id,
+                        Type = job.Type,
+                        Status = AgentJobStatus.Failed,
+                        StartedUtc = DateTime.UtcNow,
+                        CompletedUtc = DateTime.UtcNow,
+                        ExitCode = -1,
+                        Message = ex.Message
+                    });
+                    resultPublished = true;
+                }
+                catch (Exception resultEx)
+                {
+                    Log.Error(resultEx, "Failed to publish failure result for job {JobId}", job.Id);
+                }
+            }
+        }
+        finally
+        {
+            if (claimed && resultPublished)
+            {
+                try { File.Delete(runningPath); }
+                catch (Exception ex) { Log.Warning(ex, "Failed to remove running marker {RunningPath}", runningPath); }
             }
         }
     }
@@ -195,16 +284,22 @@ internal static class Program
     private static async Task<AgentJobResult> RunInstallAsync(AgentJob job)
     {
         var started = DateTime.UtcNow;
+        var spListPath = Path.Combine(AgentRoot, "splist.txt");
+        var numericIds = job.SoftPaqIds
+            .Where(id => !string.IsNullOrWhiteSpace(id))
+            .Select(id => id.Trim())
+            .Select(id => id.StartsWith("sp", StringComparison.OrdinalIgnoreCase) ? id[2..] : id)
+            .Where(id => id.Length > 0 && id.All(char.IsAsciiDigit))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        if (numericIds.Count == 0)
+            throw new InvalidOperationException("The install job does not contain any valid SoftPaq IDs.");
+
         ClearDirectory(ReportsPath);
         ClearDirectory(DownloadsPath);
 
         var hpiaExe = ResolveHpiaExe();
-        var spListPath = Path.Combine(AgentRoot, "splist.txt");
-        var numericIds = job.SoftPaqIds
-            .Where(id => !string.IsNullOrWhiteSpace(id))
-            .Select(id => id.StartsWith("sp", StringComparison.OrdinalIgnoreCase) ? id[2..] : id)
-            .Distinct(StringComparer.OrdinalIgnoreCase)
-            .ToList();
         await File.WriteAllLinesAsync(spListPath, numericIds);
 
         var offlineArg = GetOfflineModeArgument(job);
@@ -256,7 +351,17 @@ internal static class Program
         }
         catch (OperationCanceledException)
         {
-            try { process.Kill(entireProcessTree: true); } catch { }
+            try
+            {
+                process.Kill(entireProcessTree: true);
+                await process.WaitForExitAsync(CancellationToken.None)
+                    .WaitAsync(TimeSpan.FromSeconds(10));
+            }
+            catch (Exception ex)
+            {
+                Log.Warning(ex, "Timed-out HPIA process did not stop cleanly");
+            }
+
             return -1;
         }
     }
@@ -280,9 +385,30 @@ internal static class Program
 
     private static async Task WriteResultAsync(AgentJobResult result)
     {
+        ValidateJobId(result.JobId);
         var resultPath = Path.Combine(ResultsPath, $"{result.JobId}.json");
-        await File.WriteAllTextAsync(resultPath, JsonSerializer.Serialize(result, JsonOptions));
+        var tempPath = resultPath + $".{Guid.NewGuid():N}.tmp";
+
+        try
+        {
+            await File.WriteAllTextAsync(tempPath, JsonSerializer.Serialize(result, JsonOptions));
+            File.Move(tempPath, resultPath, overwrite: true);
+        }
+        finally
+        {
+            try { File.Delete(tempPath); } catch { }
+        }
+
         Log.Information("Wrote job result {JobId}: {Status}", result.JobId, result.Status);
+    }
+
+    private static void ValidateJobId(string jobId)
+    {
+        if (string.IsNullOrWhiteSpace(jobId) || jobId.Length > 128 ||
+            jobId.Any(c => !char.IsAsciiLetterOrDigit(c) && c is not '-' and not '_'))
+        {
+            throw new InvalidDataException("The job ID contains invalid characters.");
+        }
     }
 
     private static void ClearDirectory(string path)
@@ -301,6 +427,10 @@ internal static class Program
         if (!job.UseOfflineRepository || string.IsNullOrWhiteSpace(job.OfflineRepositoryPath))
             return "";
 
-        return $" /Offlinemode:\"{job.OfflineRepositoryPath.Trim()}\"";
+        var path = job.OfflineRepositoryPath.Trim();
+        if (path.Contains('"'))
+            throw new InvalidDataException("The offline repository path contains an invalid quote character.");
+
+        return $" /Offlinemode:\"{path}\"";
     }
 }

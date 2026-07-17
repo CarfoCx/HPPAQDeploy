@@ -12,6 +12,7 @@ using HPPAQDeploy.Infrastructure.Security;
 using HPPAQDeploy.Infrastructure.Services;
 using HPPAQDeploy.Shared.Configuration;
 using HPPAQDeploy.Shared.Helpers;
+using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
@@ -70,21 +71,31 @@ public partial class App : Application
                 .ConfigureServices((context, services) =>
                 {
                     // Database
-                    services.AddDbContext<AppDbContext>(ServiceLifetime.Transient);
+                    services.AddPooledDbContextFactory<AppDbContext>(options =>
+                    {
+                        var connectionString = new SqliteConnectionStringBuilder
+                        {
+                            DataSource = AppSettings.DatabasePath,
+                            Mode = SqliteOpenMode.ReadWriteCreate,
+                            Pooling = true,
+                            DefaultTimeout = 30
+                        }.ToString();
+                        options.UseSqlite(connectionString);
+                    });
 
                     // Infrastructure services
                     services.AddSingleton(new CircuitBreaker(failureThreshold: 3, openDuration: TimeSpan.FromMinutes(2)));
                     services.AddSingleton<INetworkScanner, PingSweeper>();
                     services.AddSingleton<IDeviceDiscovery, WmiDeviceDiscovery>();
-                    services.AddTransient<ICredentialStore, DpapiCredentialStore>();
+                    services.AddSingleton<ICredentialStore, DpapiCredentialStore>();
                     services.AddSingleton<IRemoteExecutor, DcomRemoteExecutor>();
                     services.AddSingleton<IAgentClient, AgentFileClient>();
                     services.AddSingleton<IAgentBootstrapper, AgentBootstrapper>();
                     services.AddSingleton<IFileTransfer, SmbFileTransfer>();
                     services.AddSingleton<IHpiaManager, HpiaManager>();
-                    services.AddTransient<IDeviceRepository, DeviceRepository>();
-                    services.AddTransient<IDeviceGroupRepository, DeviceGroupRepository>();
-                    services.AddTransient<IDeploymentHistoryRepository, DeploymentHistoryRepository>();
+                    services.AddSingleton<IDeviceRepository, DeviceRepository>();
+                    services.AddSingleton<IDeviceGroupRepository, DeviceGroupRepository>();
+                    services.AddSingleton<IDeploymentHistoryRepository, DeploymentHistoryRepository>();
                     services.AddSingleton<HpiaExtractor>();
                     services.AddSingleton<HpiaReportParser>();
                     services.AddSingleton<RepositorySyncer>();
@@ -112,44 +123,10 @@ public partial class App : Application
 
             await _host.StartAsync();
 
-            // Ensure database is created and schema is up-to-date
-            using (var scope = _host.Services.CreateScope())
+            if (!await InitializeDatabaseAsync(_host.Services))
             {
-                var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
-                db.Initialize();
-
-                // SQLite integrity check — detect and handle corruption
-                try
-                {
-                    var result = db.Database.ExecuteSqlRaw("PRAGMA integrity_check");
-                    Log.Information("Database integrity check passed");
-                }
-                catch (Exception dbEx)
-                {
-                    Log.Error(dbEx, "Database integrity check failed");
-                    var dbPath = AppSettings.DatabasePath;
-                    var backupPath = dbPath + $".corrupt.{DateTime.Now:yyyyMMdd-HHmmss}.bak";
-
-                    if (MessageBox.Show(
-                        $"The database appears to be corrupted.\n\n" +
-                        $"Would you like to back up the current database and start fresh?\n\n" +
-                        $"Backup will be saved to:\n{backupPath}",
-                        "Database Corruption Detected",
-                        MessageBoxButton.YesNo, MessageBoxImage.Warning) == MessageBoxResult.Yes)
-                    {
-                        try
-                        {
-                            File.Copy(dbPath, backupPath, overwrite: true);
-                            File.Delete(dbPath);
-                            db.Initialize(); // Re-create fresh DB
-                            Log.Warning("Corrupt database backed up to {BackupPath} and re-created", backupPath);
-                        }
-                        catch (Exception resetEx)
-                        {
-                            Log.Error(resetEx, "Failed to reset corrupt database");
-                        }
-                    }
-                }
+                Shutdown(1);
+                return;
             }
 
             // Start scheduled scan service
@@ -170,6 +147,83 @@ public partial class App : Application
                 "Startup Error", MessageBoxButton.OK, MessageBoxImage.Error);
             Shutdown(1);
         }
+    }
+
+    private static async Task<bool> InitializeDatabaseAsync(IServiceProvider services)
+    {
+        var factory = services.GetRequiredService<IDbContextFactory<AppDbContext>>();
+        var dbPath = AppSettings.DatabasePath;
+
+        if (File.Exists(dbPath))
+        {
+            string? integrityResult = null;
+            Exception? integrityException = null;
+
+            try
+            {
+                await using var integrityContext = await factory.CreateDbContextAsync();
+                await integrityContext.Database.OpenConnectionAsync();
+                try
+                {
+                    await using var command = integrityContext.Database.GetDbConnection().CreateCommand();
+                    command.CommandText = "PRAGMA integrity_check(1);";
+                    integrityResult = Convert.ToString(await command.ExecuteScalarAsync());
+                }
+                finally
+                {
+                    await integrityContext.Database.CloseConnectionAsync();
+                }
+            }
+            catch (Exception ex)
+            {
+                integrityException = ex;
+            }
+
+            if (!string.Equals(integrityResult, "ok", StringComparison.OrdinalIgnoreCase))
+            {
+                Log.Error(integrityException,
+                    "Database integrity check failed: {IntegrityResult}", integrityResult ?? "no result");
+
+                var backupPath = dbPath + $".corrupt.{DateTime.Now:yyyyMMdd-HHmmss}.bak";
+                var reset = MessageBox.Show(
+                    $"The database appears to be corrupted.\n\n" +
+                    $"Back up the current database and start with a new one?\n\n" +
+                    $"Backup: {backupPath}",
+                    "Database Corruption Detected",
+                    MessageBoxButton.YesNo,
+                    MessageBoxImage.Warning);
+
+                if (reset != MessageBoxResult.Yes)
+                {
+                    Log.Error("Startup cancelled because the database failed its integrity check");
+                    return false;
+                }
+
+                File.Copy(dbPath, backupPath, overwrite: true);
+                CopyIfExists(dbPath + "-wal", backupPath + "-wal");
+                CopyIfExists(dbPath + "-shm", backupPath + "-shm");
+
+                SqliteConnection.ClearAllPools();
+                File.Delete(dbPath);
+                File.Delete(dbPath + "-wal");
+                File.Delete(dbPath + "-shm");
+                Log.Warning("Corrupt database backed up to {BackupPath}", backupPath);
+            }
+            else
+            {
+                Log.Information("Database integrity check passed");
+            }
+        }
+
+        await using var db = await factory.CreateDbContextAsync();
+        db.Initialize();
+        return true;
+    }
+
+    private static void CopyIfExists(string source, string destination)
+    {
+        if (File.Exists(source))
+            File.Copy(source, destination, overwrite: true);
     }
 
     protected override async void OnExit(ExitEventArgs e)

@@ -56,4 +56,26 @@ public class CidrRangeTests
         Assert.Equal("172.16.0.0", cidr.StartAddress.ToString());
         Assert.Equal("172.16.255.255", cidr.EndAddress.ToString());
     }
+
+    [Fact]
+    public void Ipv6_IsRejectedInsteadOfTruncated()
+    {
+        Assert.Throws<FormatException>(() => new CidrRange("2001:db8::/32"));
+        Assert.False(new CidrRange("10.0.0.0/8").Contains("2001:db8::1"));
+    }
+
+    [Theory]
+    [InlineData("0.0.0.0/0")]
+    [InlineData("0.0.0.0/1")]
+    public void RangeTooLargeForProgressCount_IsRejected(string cidr)
+    {
+        Assert.Throws<FormatException>(() => new CidrRange(cidr));
+    }
+
+    [Fact]
+    public void HighestSlash32_DoesNotWrapEnumeration()
+    {
+        var hosts = new CidrRange("255.255.255.255/32").GetAllHosts().ToList();
+        Assert.Equal(["255.255.255.255"], hosts.Select(ip => ip.ToString()));
+    }
 }

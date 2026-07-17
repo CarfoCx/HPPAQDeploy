@@ -8,6 +8,7 @@ namespace HPPAQDeploy.Shared.Configuration;
 public static class AppSettings
 {
     private static readonly string AppRoot = AppDomain.CurrentDomain.BaseDirectory;
+    private static readonly object SettingsIoLock = new();
 
     public static string HpiaExePath { get; set; } = Path.Combine(AppRoot, "hp-hpia-5.3.4.exe");
     public static string HpiaExtractPath { get; set; } = Path.Combine(AppRoot, "HPIA");
@@ -96,126 +97,135 @@ public static class AppSettings
     [System.Runtime.Versioning.SupportedOSPlatform("windows")]
     public static void Save()
     {
-        var data = new SettingsData
+        lock (SettingsIoLock)
         {
-            DefaultPingConcurrency = DefaultPingConcurrency,
-            DefaultWmiConcurrency = DefaultWmiConcurrency,
-            DefaultScanConcurrency = DefaultScanConcurrency,
-            DefaultDeployConcurrency = DefaultDeployConcurrency,
-            PingTimeoutMs = PingTimeoutMs,
-            WmiTimeoutSeconds = WmiTimeoutSeconds,
-            AnalysisTimeoutMinutes = AnalysisTimeoutMinutes,
-            DeployTimeoutMinutes = DeployTimeoutMinutes,
-            FileTransferTimeoutMinutes = FileTransferTimeoutMinutes,
-            RetryMaxAttempts = RetryMaxAttempts,
-            RetryBaseDelayMs = RetryBaseDelayMs,
-            ScheduledScanEnabled = ScheduledScanEnabled,
-            ScheduledScanIntervalHours = ScheduledScanInterval.TotalHours,
-            LastScheduledScan = LastScheduledScan,
-            ScheduledScanCidr = ScheduledScanCidr,
-            RepositoryPath = RepositoryPath,
-            RepositorySharePath = RepositorySharePath,
-            UseOfflineRepository = UseOfflineRepository,
-            EmailNotificationsEnabled = EmailNotificationsEnabled,
-            SmtpServer = SmtpServer,
-            SmtpPort = SmtpPort,
-            SmtpUseSsl = SmtpUseSsl,
-            SmtpUsername = SmtpUsername,
-            SmtpPasswordProtected = ProtectString(SmtpPassword),
-            EmailFrom = EmailFrom,
-            EmailTo = EmailTo,
-            NotifyOnScanComplete = NotifyOnScanComplete,
-            NotifyOnCriticalUpdates = NotifyOnCriticalUpdates,
-            NotifyOnDeployComplete = NotifyOnDeployComplete,
-            NotifyOnDeployFailure = NotifyOnDeployFailure,
-            BiosPasswordsProtected = BiosPasswords.Select(p => ProtectString(p)).ToList()
-        };
-        var dir = Path.GetDirectoryName(SettingsFilePath);
-        if (dir != null) Directory.CreateDirectory(dir);
-        var json = JsonSerializer.Serialize(data, new JsonSerializerOptions { WriteIndented = true });
+            var data = new SettingsData
+            {
+                DefaultPingConcurrency = DefaultPingConcurrency,
+                DefaultWmiConcurrency = DefaultWmiConcurrency,
+                DefaultScanConcurrency = DefaultScanConcurrency,
+                DefaultDeployConcurrency = DefaultDeployConcurrency,
+                PingTimeoutMs = PingTimeoutMs,
+                WmiTimeoutSeconds = WmiTimeoutSeconds,
+                AnalysisTimeoutMinutes = AnalysisTimeoutMinutes,
+                DeployTimeoutMinutes = DeployTimeoutMinutes,
+                FileTransferTimeoutMinutes = FileTransferTimeoutMinutes,
+                RetryMaxAttempts = RetryMaxAttempts,
+                RetryBaseDelayMs = RetryBaseDelayMs,
+                ScheduledScanEnabled = ScheduledScanEnabled,
+                ScheduledScanIntervalHours = ScheduledScanInterval.TotalHours,
+                LastScheduledScan = LastScheduledScan,
+                ScheduledScanCidr = ScheduledScanCidr,
+                RepositoryPath = RepositoryPath,
+                RepositorySharePath = RepositorySharePath,
+                UseOfflineRepository = UseOfflineRepository,
+                EmailNotificationsEnabled = EmailNotificationsEnabled,
+                SmtpServer = SmtpServer,
+                SmtpPort = SmtpPort,
+                SmtpUseSsl = SmtpUseSsl,
+                SmtpUsername = SmtpUsername,
+                SmtpPasswordProtected = ProtectString(SmtpPassword),
+                EmailFrom = EmailFrom,
+                EmailTo = EmailTo,
+                NotifyOnScanComplete = NotifyOnScanComplete,
+                NotifyOnCriticalUpdates = NotifyOnCriticalUpdates,
+                NotifyOnDeployComplete = NotifyOnDeployComplete,
+                NotifyOnDeployFailure = NotifyOnDeployFailure,
+                BiosPasswordsProtected = BiosPasswords.Select(p => ProtectString(p)).ToList()
+            };
+            var dir = Path.GetDirectoryName(SettingsFilePath);
+            if (dir != null) Directory.CreateDirectory(dir);
+            var json = JsonSerializer.Serialize(data, new JsonSerializerOptions { WriteIndented = true });
 
-        // Write to a temp file first, then atomically replace, so a crash or power
-        // loss mid-write can never leave a truncated/corrupt settings.json behind.
-        var tempPath = SettingsFilePath + ".tmp";
-        File.WriteAllText(tempPath, json);
-        if (File.Exists(SettingsFilePath))
-            File.Replace(tempPath, SettingsFilePath, null);
-        else
-            File.Move(tempPath, SettingsFilePath);
+            // A unique temp also avoids collisions with a second app process.
+            var tempPath = SettingsFilePath + $".{Guid.NewGuid():N}.tmp";
+            try
+            {
+                File.WriteAllText(tempPath, json);
+                File.Move(tempPath, SettingsFilePath, overwrite: true);
+            }
+            finally
+            {
+                try { File.Delete(tempPath); } catch { }
+            }
+        }
     }
 
     [System.Runtime.Versioning.SupportedOSPlatform("windows")]
     public static void Load()
     {
-        if (!File.Exists(SettingsFilePath)) return;
-        try
+        lock (SettingsIoLock)
         {
-            var json = File.ReadAllText(SettingsFilePath);
-            var data = JsonSerializer.Deserialize<SettingsData>(json);
-            if (data == null) return;
+            if (!File.Exists(SettingsFilePath)) return;
+            try
+            {
+                var json = File.ReadAllText(SettingsFilePath);
+                var data = JsonSerializer.Deserialize<SettingsData>(json);
+                if (data == null) return;
 
-            if (!string.IsNullOrEmpty(data.RepositoryPath)) RepositoryPath = data.RepositoryPath;
-            RepositorySharePath = data.RepositorySharePath ?? string.Empty;
-            UseOfflineRepository = data.UseOfflineRepository;
-
-            DefaultPingConcurrency = data.DefaultPingConcurrency;
-            DefaultWmiConcurrency = data.DefaultWmiConcurrency;
-            DefaultScanConcurrency = data.DefaultScanConcurrency;
-            DefaultDeployConcurrency = data.DefaultDeployConcurrency;
-            PingTimeoutMs = data.PingTimeoutMs;
-            WmiTimeoutSeconds = data.WmiTimeoutSeconds;
-            AnalysisTimeoutMinutes = data.AnalysisTimeoutMinutes;
-            DeployTimeoutMinutes = data.DeployTimeoutMinutes;
-            FileTransferTimeoutMinutes = data.FileTransferTimeoutMinutes;
-            RetryMaxAttempts = data.RetryMaxAttempts;
-            RetryBaseDelayMs = data.RetryBaseDelayMs;
-            ScheduledScanEnabled = data.ScheduledScanEnabled;
-            ScheduledScanInterval = TimeSpan.FromHours(data.ScheduledScanIntervalHours);
-            LastScheduledScan = data.LastScheduledScan;
-            ScheduledScanCidr = data.ScheduledScanCidr;
-            EmailNotificationsEnabled = data.EmailNotificationsEnabled;
-            SmtpServer = data.SmtpServer;
-            SmtpPort = data.SmtpPort;
-            SmtpUseSsl = data.SmtpUseSsl;
-            SmtpUsername = data.SmtpUsername;
-
-            // Load SMTP password: prefer DPAPI-protected, fall back to legacy plaintext
-            if (!string.IsNullOrEmpty(data.SmtpPasswordProtected))
-                SmtpPassword = UnprotectString(data.SmtpPasswordProtected);
-            else if (!string.IsNullOrEmpty(data.SmtpPassword))
-                SmtpPassword = data.SmtpPassword; // Legacy plaintext, will be re-encrypted on next Save()
-
-            EmailFrom = data.EmailFrom;
-            EmailTo = data.EmailTo;
-            NotifyOnScanComplete = data.NotifyOnScanComplete;
-            NotifyOnCriticalUpdates = data.NotifyOnCriticalUpdates;
-            NotifyOnDeployComplete = data.NotifyOnDeployComplete;
-            NotifyOnDeployFailure = data.NotifyOnDeployFailure;
-
-            if (data.BiosPasswordsProtected?.Count > 0)
-                BiosPasswords = data.BiosPasswordsProtected.Select(p => UnprotectString(p)).ToList();
-
-            // Guard against corrupt/legacy values that would crash the app
-            // (e.g. SemaphoreSlim(0) throws; a 0ms/0min timeout would fail instantly).
-            DefaultPingConcurrency = Math.Clamp(DefaultPingConcurrency, 1, 4096);
-            DefaultWmiConcurrency = Math.Clamp(DefaultWmiConcurrency, 1, 1024);
-            DefaultScanConcurrency = Math.Clamp(DefaultScanConcurrency, 1, 1024);
-            DefaultDeployConcurrency = Math.Clamp(DefaultDeployConcurrency, 1, 1024);
-            PingTimeoutMs = Math.Clamp(PingTimeoutMs, 100, 60_000);
-            WmiTimeoutSeconds = Math.Max(1, WmiTimeoutSeconds);
-            AnalysisTimeoutMinutes = Math.Max(1, AnalysisTimeoutMinutes);
-            DeployTimeoutMinutes = Math.Max(1, DeployTimeoutMinutes);
-            FileTransferTimeoutMinutes = Math.Max(1, FileTransferTimeoutMinutes);
-            RetryMaxAttempts = Math.Clamp(RetryMaxAttempts, 1, 10);
-            RetryBaseDelayMs = Math.Clamp(RetryBaseDelayMs, 0, 60_000);
-        }
-        catch (Exception ex)
-        {
-            // Log the error so admins know the settings file is corrupt
-            Log.Error(ex, "Failed to load settings from {SettingsFilePath}", SettingsFilePath);
-            // Fall through to defaults
+                Apply(data);
+            }
+            catch (Exception ex)
+            {
+                Log.Error(ex, "Failed to load settings from {SettingsFilePath}", SettingsFilePath);
+            }
         }
     }
+
+    [System.Runtime.Versioning.SupportedOSPlatform("windows")]
+    private static void Apply(SettingsData data)
+    {
+        var scheduledInterval = NormalizeScheduledScanInterval(data.ScheduledScanIntervalHours);
+        var smtpPassword = !string.IsNullOrEmpty(data.SmtpPasswordProtected)
+            ? UnprotectString(data.SmtpPasswordProtected)
+            : data.SmtpPassword ?? string.Empty;
+        IReadOnlyList<string> biosPasswords = data.BiosPasswordsProtected?.Count > 0
+            ? data.BiosPasswordsProtected.Select(UnprotectString).ToList()
+            : Array.Empty<string>();
+
+        // Publish only after every value has been parsed, bounded, and decrypted.
+        if (!string.IsNullOrEmpty(data.RepositoryPath)) RepositoryPath = data.RepositoryPath;
+        RepositorySharePath = data.RepositorySharePath ?? string.Empty;
+        UseOfflineRepository = data.UseOfflineRepository;
+        DefaultPingConcurrency = Math.Clamp(data.DefaultPingConcurrency, 1, 4096);
+        DefaultWmiConcurrency = Math.Clamp(data.DefaultWmiConcurrency, 1, 1024);
+        DefaultScanConcurrency = Math.Clamp(data.DefaultScanConcurrency, 1, 1024);
+        DefaultDeployConcurrency = Math.Clamp(data.DefaultDeployConcurrency, 1, 1024);
+        PingTimeoutMs = Math.Clamp(data.PingTimeoutMs, 100, 60_000);
+        WmiTimeoutSeconds = Math.Clamp(data.WmiTimeoutSeconds, 1, 300);
+        AnalysisTimeoutMinutes = Math.Clamp(data.AnalysisTimeoutMinutes, 1, 24 * 60);
+        DeployTimeoutMinutes = Math.Clamp(data.DeployTimeoutMinutes, 1, 24 * 60);
+        FileTransferTimeoutMinutes = Math.Clamp(data.FileTransferTimeoutMinutes, 1, 24 * 60);
+        RetryMaxAttempts = Math.Clamp(data.RetryMaxAttempts, 1, 10);
+        RetryBaseDelayMs = Math.Clamp(data.RetryBaseDelayMs, 0, 60_000);
+        ScheduledScanEnabled = data.ScheduledScanEnabled;
+        ScheduledScanInterval = scheduledInterval;
+        LastScheduledScan = data.LastScheduledScan;
+        ScheduledScanCidr = data.ScheduledScanCidr ?? string.Empty;
+        EmailNotificationsEnabled = data.EmailNotificationsEnabled;
+        SmtpServer = data.SmtpServer ?? string.Empty;
+        SmtpPort = NormalizeSmtpPort(data.SmtpPort);
+        SmtpUseSsl = data.SmtpUseSsl;
+        SmtpUsername = data.SmtpUsername ?? string.Empty;
+        SmtpPassword = smtpPassword;
+        EmailFrom = data.EmailFrom ?? string.Empty;
+        EmailTo = data.EmailTo ?? string.Empty;
+        NotifyOnScanComplete = data.NotifyOnScanComplete;
+        NotifyOnCriticalUpdates = data.NotifyOnCriticalUpdates;
+        NotifyOnDeployComplete = data.NotifyOnDeployComplete;
+        NotifyOnDeployFailure = data.NotifyOnDeployFailure;
+        BiosPasswords = biosPasswords;
+    }
+
+    internal static TimeSpan NormalizeScheduledScanInterval(double hours)
+    {
+        var normalizedHours = double.IsFinite(hours)
+            ? Math.Clamp(hours, 1, 24 * 365)
+            : 24;
+        return TimeSpan.FromHours(normalizedHours);
+    }
+
+    internal static int NormalizeSmtpPort(int port) => Math.Clamp(port, 1, 65_535);
 
     private class SettingsData
     {

@@ -101,4 +101,17 @@ public class RetryHelperTests
 
         Assert.Equal(2, callCount);
     }
+
+    [Theory]
+    [InlineData(-1, 0)]
+    [InlineData(31, 0)]
+    [InlineData(1, -1)]
+    public async Task RetryAsync_RejectsUnsafeRetrySettings(int retries, int delay)
+    {
+        await Assert.ThrowsAsync<ArgumentOutOfRangeException>(() =>
+            RetryHelper.RetryAsync(
+                () => Task.FromResult(1),
+                maxRetries: retries,
+                baseDelayMs: delay));
+    }
 }

@@ -9,15 +9,10 @@ namespace HPPAQDeploy.Infrastructure.Services;
 
 public class EmailService : IEmailService
 {
-    private bool IsConfigured =>
-        AppSettings.EmailNotificationsEnabled &&
-        !string.IsNullOrWhiteSpace(AppSettings.SmtpServer) &&
-        !string.IsNullOrWhiteSpace(AppSettings.EmailFrom) &&
-        !string.IsNullOrWhiteSpace(AppSettings.EmailTo);
-
     public async Task SendAsync(string subject, string body, CancellationToken ct = default)
     {
-        if (!IsConfigured)
+        var options = GetCurrentOptions();
+        if (!IsConfigured(options))
         {
             Log.Debug("Email notifications not configured, skipping send");
             return;
@@ -27,11 +22,15 @@ public class EmailService : IEmailService
         {
             await RetryHelper.RetryAsync(async () =>
             {
-                using var client = CreateSmtpClient();
-                var message = CreateMessage(subject, body);
+                using var client = CreateSmtpClient(options);
+                using var message = CreateMessage(options, subject, body);
                 await client.SendMailAsync(message, ct);
             }, maxRetries: 2, baseDelayMs: 3000, ct: ct).ConfigureAwait(false);
             Log.Information("Email sent successfully: {Subject}", subject);
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            throw;
         }
         catch (Exception ex)
         {
@@ -39,15 +38,17 @@ public class EmailService : IEmailService
         }
     }
 
-    public async Task<bool> TestConnectionAsync(CancellationToken ct = default)
+    public async Task<bool> TestConnectionAsync(EmailConnectionOptions options, CancellationToken ct = default)
     {
-        if (!IsConfigured)
+        ArgumentNullException.ThrowIfNull(options);
+        if (!IsConfigured(options))
             return false;
 
         try
         {
-            using var client = CreateSmtpClient();
-            var message = CreateMessage(
+            using var client = CreateSmtpClient(options);
+            using var message = CreateMessage(
+                options,
                 "HPPAQDeploy - Test Email",
                 FormatHtml("Test Email",
                     "<p>This is a test email from HPPAQDeploy.</p>" +
@@ -110,35 +111,51 @@ public class EmailService : IEmailService
         await SendAsync($"HPPAQDeploy - Deploy {subjectPrefix}: {successCount} succeeded, {failCount} failed", body);
     }
 
-    private SmtpClient CreateSmtpClient()
+    private static EmailConnectionOptions GetCurrentOptions() => new(
+        AppSettings.EmailNotificationsEnabled,
+        AppSettings.SmtpServer,
+        AppSettings.SmtpPort,
+        AppSettings.SmtpUseSsl,
+        AppSettings.SmtpUsername,
+        AppSettings.SmtpPassword,
+        AppSettings.EmailFrom,
+        AppSettings.EmailTo);
+
+    private static bool IsConfigured(EmailConnectionOptions options) =>
+        options.Enabled &&
+        !string.IsNullOrWhiteSpace(options.SmtpServer) &&
+        !string.IsNullOrWhiteSpace(options.From) &&
+        !string.IsNullOrWhiteSpace(options.To);
+
+    private static SmtpClient CreateSmtpClient(EmailConnectionOptions options)
     {
-        var client = new SmtpClient(AppSettings.SmtpServer, AppSettings.SmtpPort)
+        var client = new SmtpClient(options.SmtpServer, options.SmtpPort)
         {
-            EnableSsl = AppSettings.SmtpUseSsl,
+            EnableSsl = options.UseSsl,
             Timeout = 30000
         };
 
-        if (!string.IsNullOrWhiteSpace(AppSettings.SmtpUsername))
+        if (!string.IsNullOrWhiteSpace(options.Username))
         {
             client.Credentials = new NetworkCredential(
-                AppSettings.SmtpUsername,
-                AppSettings.SmtpPassword);
+                options.Username,
+                options.Password);
         }
 
         return client;
     }
 
-    private MailMessage CreateMessage(string subject, string htmlBody)
+    private static MailMessage CreateMessage(EmailConnectionOptions options, string subject, string htmlBody)
     {
         var message = new MailMessage
         {
-            From = new MailAddress(AppSettings.EmailFrom),
+            From = new MailAddress(options.From),
             Subject = subject,
             Body = htmlBody,
             IsBodyHtml = true
         };
 
-        foreach (var to in AppSettings.EmailTo.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+        foreach (var to in options.To.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
         {
             message.To.Add(to);
         }

@@ -1,4 +1,5 @@
 using System.Net;
+using System.Net.Sockets;
 using HPPAQDeploy.Core.Models;
 
 namespace HPPAQDeploy.Infrastructure.Network;
@@ -22,13 +23,16 @@ public static class CidrCalculator
         if (parts.Length != 2)
             return false;
 
-        if (!IPAddress.TryParse(parts[0], out _))
+        if (!IPAddress.TryParse(parts[0], out var address) ||
+            address.AddressFamily != AddressFamily.InterNetwork)
             return false;
 
         if (!int.TryParse(parts[1], out var prefix))
             return false;
 
-        return prefix >= 0 && prefix <= 32;
+        // CidrRange exposes Int32 progress counts, so /0 and /1 cannot be
+        // represented or scanned safely by this application.
+        return prefix >= 2 && prefix <= 32;
     }
 
     /// <summary>
@@ -55,6 +59,11 @@ public static class CidrCalculator
     /// </summary>
     public static bool IsInRange(IPAddress address, CidrRange range)
     {
+        ArgumentNullException.ThrowIfNull(address);
+        ArgumentNullException.ThrowIfNull(range);
+        if (address.AddressFamily != AddressFamily.InterNetwork)
+            return false;
+
         var addrBytes = address.GetAddressBytes();
         uint addrUint = (uint)(addrBytes[0] << 24 | addrBytes[1] << 16 | addrBytes[2] << 8 | addrBytes[3]);
 

@@ -25,6 +25,8 @@ public partial class DevicesViewModel : ObservableObject
     private readonly IDeviceDiscovery _discovery;
     private readonly ICredentialStore _credentialStore;
     private readonly IEmailService _emailService;
+    private readonly HashSet<Device> _subscribedDevices = [];
+    private readonly SemaphoreSlim _loadGate = new(1, 1);
     private CancellationTokenSource? _cts;
 
     // ── Device list ──
@@ -52,10 +54,16 @@ public partial class DevicesViewModel : ObservableObject
 
     partial void OnDevicesChanged(ObservableCollection<Device> value)
     {
-        foreach (var device in value)
+        foreach (var device in _subscribedDevices.Except(value).ToList())
         {
             device.PropertyChanged -= Device_PropertyChanged;
-            device.PropertyChanged += Device_PropertyChanged;
+            _subscribedDevices.Remove(device);
+        }
+
+        foreach (var device in value)
+        {
+            if (_subscribedDevices.Add(device))
+                device.PropertyChanged += Device_PropertyChanged;
         }
 
         UpdateSelectedDeviceCount();
@@ -95,10 +103,10 @@ public partial class DevicesViewModel : ObservableObject
         _discovery = discovery;
         _credentialStore = credentialStore;
         _emailService = emailService;
-        
+
         CredentialManagerViewModel.CredentialsChanged += (_, _) =>
             AsyncInitHelper.SafeFireAndForget(RefreshCredentialsAsync, nameof(DevicesViewModel));
-            
+
         AsyncInitHelper.SafeFireAndForget(InitializeAsync, nameof(DevicesViewModel));
     }
 
@@ -153,6 +161,9 @@ public partial class DevicesViewModel : ObservableObject
     [RelayCommand]
     private async Task LoadDevicesAsync()
     {
+        if (!await _loadGate.WaitAsync(0))
+            return;
+
         IsLoading = true;
         try
         {
@@ -169,6 +180,7 @@ public partial class DevicesViewModel : ObservableObject
         finally
         {
             IsLoading = false;
+            _loadGate.Release();
         }
     }
 
@@ -181,10 +193,10 @@ public partial class DevicesViewModel : ObservableObject
             var currentSelection = SelectedCredential?.Id;
             var creds = await _credentialStore.GetAllAsync();
             Credentials = new ObservableCollection<Credential>(creds);
-            
+
             if (currentSelection != null)
                 SelectedCredential = Credentials.FirstOrDefault(c => c.Id == currentSelection);
-                
+
             if (SelectedCredential == null)
                 SelectedCredential = Credentials.FirstOrDefault(c => c.IsDefault) ?? Credentials.FirstOrDefault();
         }
@@ -251,6 +263,19 @@ public partial class DevicesViewModel : ObservableObject
             return;
         }
 
+        NetworkCredential networkCred;
+        try
+        {
+            networkCred = await _credentialStore.DecryptAsync(SelectedCredential);
+        }
+        catch (Exception ex)
+        {
+            ScanStatus = $"Unable to decrypt the selected credential: {ex.Message}";
+            Log.Error(ex, "Failed to decrypt credentials for network scan");
+            SnackbarService.ShowError("Unable to use the selected credential.");
+            return;
+        }
+
         IsScanning = true;
         _cts?.Dispose();
         _cts = new CancellationTokenSource();
@@ -258,10 +283,9 @@ public partial class DevicesViewModel : ObservableObject
         AliveHosts = 0;
         HpDevicesFound = 0;
         WmiFailures = 0;
-        TotalIps = cidr.TotalHosts;
-        ScanStatus = $"Scanning {cidr.TotalHosts} IPs in {CidrInput}...";
+        TotalIps = cidr.UsableHostCount;
+        ScanStatus = $"Scanning {cidr.UsableHostCount} IPs in {CidrInput}...";
 
-        var networkCred = await _credentialStore.DecryptAsync(SelectedCredential);
         var progress = new Progress<(int completed, int total)>(p =>
         {
             ScannedIps = p.completed;
@@ -270,11 +294,13 @@ public partial class DevicesViewModel : ObservableObject
 
         var wmiTasks = new ConcurrentBag<Task>();
         var wmiSemaphore = new SemaphoreSlim(AppSettings.DefaultWmiConcurrency);
-        var dbSemaphore = new SemaphoreSlim(1); // Serialize DB writes to prevent DbContext threading issues
+        var discoveredDevices = new ConcurrentBag<Device>();
         var pendingDevices = new ConcurrentQueue<Device>();
         var pendingWmiFailures = 0;
         var pendingAliveHosts = 0;
         var nonHpDevices = 0;
+        var discoveredDevicesPersisted = false;
+        var respondingHosts = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
         var flushTimer = new DispatcherTimer(DispatcherPriority.Background, Application.Current.Dispatcher)
         {
@@ -291,6 +317,7 @@ public partial class DevicesViewModel : ObservableObject
             {
                 if (!result.IsAlive) continue;
                 Interlocked.Increment(ref pendingAliveHosts);
+                respondingHosts.Add(result.IpAddress);
 
                 var ip = result.IpAddress;
                 var task = Task.Run(async () =>
@@ -303,10 +330,7 @@ public partial class DevicesViewModel : ObservableObject
                         {
                             device.Status = DeviceStatus.Online;
                             device.LastScanned = DateTime.Now;
-                            await dbSemaphore.WaitAsync(_cts!.Token);
-                            try { await _deviceRepository.UpsertAsync(device); }
-                            finally { dbSemaphore.Release(); }
-                            pendingDevices.Enqueue(device);
+                            discoveredDevices.Add(device);
                             Log.Information("Discovered HP device: {Hostname} ({Model}) at {Ip}",
                                 device.Hostname, device.Model, device.IpAddress);
                         }
@@ -332,12 +356,14 @@ public partial class DevicesViewModel : ObservableObject
 
             ScanStatus = $"Ping sweep done. Waiting for {wmiTasks.Count(t => !t.IsCompleted)} remaining WMI queries...";
             await Task.WhenAll(wmiTasks);
+            await PersistDiscoveredDevicesAsync(discoveredDevices, pendingDevices, _cts.Token);
+            discoveredDevicesPersisted = true;
             flushTimer.Stop();
             FlushPendingDevicesToUi(pendingDevices, ref pendingWmiFailures, ref pendingAliveHosts);
 
             // Mark existing devices in the scanned range that didn't respond as Offline
             var existingDevices = await _deviceRepository.GetAllAsync();
-            int offlineCount = 0;
+            var offlineDevices = new List<Device>();
             foreach (var device in existingDevices)
             {
                 if (device.Status == DeviceStatus.Online || device.Status == DeviceStatus.Discovered)
@@ -345,17 +371,34 @@ public partial class DevicesViewModel : ObservableObject
                     // If this device's IP is in the CIDR range we just scanned, and it wasn't found alive, mark offline
                     if (!string.IsNullOrEmpty(device.IpAddress) && cidr.Contains(device.IpAddress))
                     {
-                        // Check if this device was found in the current scan (it would have been upserted with Online status)
-                        var wasFound = device.LastScanned > DateTime.Now.AddMinutes(-5);
-                        if (!wasFound)
+                        // A device can answer ping even when WMI discovery fails; only mark it
+                        // offline when it did not respond during this specific sweep.
+                        if (!respondingHosts.Contains(device.IpAddress))
                         {
                             device.Status = DeviceStatus.Offline;
-                            await _deviceRepository.UpdateAsync(device);
-                            offlineCount++;
+                            offlineDevices.Add(device);
                         }
                     }
                 }
             }
+
+            var batchableOfflineDevices = offlineDevices
+                .Where(device => !string.IsNullOrWhiteSpace(device.Hostname))
+                .ToList();
+            if (batchableOfflineDevices.Count > 0)
+                await _deviceRepository.BatchUpsertAsync(batchableOfflineDevices, _cts.Token);
+
+            // Hostname-less legacy rows cannot be upserted safely. Reload their
+            // recommendations before updating so marking them offline preserves data.
+            foreach (var device in offlineDevices.Except(batchableOfflineDevices))
+            {
+                var persisted = await _deviceRepository.GetWithRecommendationsAsync(device.Id, _cts.Token);
+                if (persisted is null) continue;
+                persisted.Status = DeviceStatus.Offline;
+                await _deviceRepository.UpdateAsync(persisted, _cts.Token);
+            }
+
+            var offlineCount = offlineDevices.Count;
 
             ScanStatus = $"Scan complete. Found {HpDevicesFound} HP devices from {AliveHosts} alive hosts ({TotalIps} IPs scanned).";
             if (nonHpDevices > 0) ScanStatus += $" {nonHpDevices} non-HP.";
@@ -377,6 +420,11 @@ public partial class DevicesViewModel : ObservableObject
         catch (OperationCanceledException)
         {
             try { await Task.WhenAll(wmiTasks); } catch (Exception ex) { Log.Debug(ex, "Scan cancellation cleanup"); }
+            if (!discoveredDevicesPersisted)
+            {
+                try { await PersistDiscoveredDevicesAsync(discoveredDevices, pendingDevices, CancellationToken.None); }
+                catch (Exception ex) { Log.Warning(ex, "Failed to persist partial scan results during cancellation"); }
+            }
             flushTimer.Stop();
             FlushPendingDevicesToUi(pendingDevices, ref pendingWmiFailures, ref pendingAliveHosts);
             ScanStatus = $"Scan cancelled. Found {HpDevicesFound} HP devices so far.";
@@ -390,10 +438,26 @@ public partial class DevicesViewModel : ObservableObject
         }
         finally
         {
+            flushTimer.Stop();
             wmiSemaphore.Dispose();
-            dbSemaphore.Dispose();
+            _cts?.Dispose();
+            _cts = null;
             IsScanning = false;
         }
+    }
+
+    private async Task PersistDiscoveredDevicesAsync(
+        ConcurrentBag<Device> discoveredDevices,
+        ConcurrentQueue<Device> pendingDevices,
+        CancellationToken ct)
+    {
+        var devices = discoveredDevices.ToList();
+        if (devices.Count == 0)
+            return;
+
+        await _deviceRepository.BatchUpsertAsync(devices, ct);
+        foreach (var device in devices)
+            pendingDevices.Enqueue(device);
     }
 
     private void FlushPendingDevicesToUi(ConcurrentQueue<Device> pendingDevices, ref int pendingWmiFailures, ref int pendingAliveHosts)
@@ -440,11 +504,11 @@ public partial class DevicesViewModel : ObservableObject
 
         IsAddingHost = true;
         SingleHostStatus = $"Connecting to {SingleHostInput.Trim()}...";
-        var networkCred = await _credentialStore.DecryptAsync(SelectedCredential);
         var target = SingleHostInput.Trim();
 
         try
         {
+            var networkCred = await _credentialStore.DecryptAsync(SelectedCredential);
             var device = await _discovery.IdentifyDeviceAsync(target, networkCred, CancellationToken.None);
             if (device is not null)
             {
@@ -620,10 +684,10 @@ public partial class DevicesViewModel : ObservableObject
     }
 
     [RelayCommand]
-    private void CopyHostname() => ClipboardHelper.CopyToClipboard(SelectedDevice?.Hostname);
+    private void CopyHostname(Device? device) => ClipboardHelper.CopyToClipboard(device?.Hostname);
 
     [RelayCommand]
-    private void CopyIpAddress() => ClipboardHelper.CopyToClipboard(SelectedDevice?.IpAddress);
+    private void CopyIpAddress(Device? device) => ClipboardHelper.CopyToClipboard(device?.IpAddress);
 
     [RelayCommand]
     private async Task DeleteSelectedDevicesAsync()

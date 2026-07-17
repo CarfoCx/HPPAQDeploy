@@ -22,6 +22,32 @@ public class StatusToColorConverter : IValueConverter
     private static readonly SolidColorBrush SuccessBrush     = Freeze(new SolidColorBrush(Color.FromRgb(76, 175, 80)));
     private static readonly SolidColorBrush WarningBrush     = Freeze(new SolidColorBrush(Color.FromRgb(255, 152, 0)));
     private static readonly SolidColorBrush InfoBrush        = Freeze(new SolidColorBrush(Color.FromRgb(0, 150, 214)));
+    private static readonly Dictionary<string, SolidColorBrush> StringBrushes = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ["online"] = OnlineBrush,
+        ["discovered"] = DiscoveredBrush,
+        ["scanning"] = InProgressBrush,
+        ["analyzing"] = InProgressBrush,
+        ["deploying"] = InProgressBrush,
+        ["in progress"] = InProgressBrush,
+        ["completed"] = CompletedBrush,
+        ["complete"] = CompletedBrush,
+        ["reboot required"] = RebootBrush,
+        ["rebootrequired"] = RebootBrush,
+        ["ready to deploy"] = ReadyBrush,
+        ["readytodeploy"] = ReadyBrush,
+        ["failed"] = FailedBrush,
+        ["offline"] = OfflineBrush,
+        ["unreachable"] = OfflineBrush,
+        ["critical"] = CriticalBrush,
+        ["recommended"] = RecommendedBrush,
+        ["routine"] = InfoBrush,
+        ["optional"] = OptionalBrush,
+        ["success"] = SuccessBrush,
+        ["error"] = FailedBrush,
+        ["warning"] = WarningBrush,
+        ["info"] = InfoBrush
+    };
 
     private static SolidColorBrush Freeze(SolidColorBrush brush) { brush.Freeze(); return brush; }
 
@@ -44,20 +70,9 @@ public class StatusToColorConverter : IValueConverter
             };
         }
 
-        if (value is string severity)
+        if (value is string text && StringBrushes.TryGetValue(text.Trim(), out var brush))
         {
-            return severity.ToLowerInvariant() switch
-            {
-                "critical" => CriticalBrush,
-                "recommended" => RecommendedBrush,
-                "routine" => InfoBrush,
-                "optional" => OptionalBrush,
-                "success" => SuccessBrush,
-                "error" => FailedBrush,
-                "warning" => WarningBrush,
-                "info" => InfoBrush,
-                _ => OfflineBrush
-            };
+            return brush;
         }
 
         return OfflineBrush;
@@ -100,9 +115,24 @@ public class ZeroToVisibilityConverter : IValueConverter
 {
     public object Convert(object value, Type targetType, object parameter, CultureInfo culture)
     {
-        int count = value is int i ? i : 0;
-        return count == 0 ? System.Windows.Visibility.Visible : System.Windows.Visibility.Collapsed;
+        return IsZero(value) ? System.Windows.Visibility.Visible : System.Windows.Visibility.Collapsed;
     }
+
+    internal static bool IsZero(object? value) => value switch
+    {
+        byte number => number == 0,
+        sbyte number => number == 0,
+        short number => number == 0,
+        ushort number => number == 0,
+        int number => number == 0,
+        uint number => number == 0,
+        long number => number == 0,
+        ulong number => number == 0,
+        float number => number == 0,
+        double number => number == 0,
+        decimal number => number == 0,
+        _ => true
+    };
 
     public object ConvertBack(object value, Type targetType, object parameter, CultureInfo culture)
         => throw new NotImplementedException();
@@ -112,8 +142,9 @@ public class NonZeroToVisibilityConverter : IValueConverter
 {
     public object Convert(object value, Type targetType, object parameter, CultureInfo culture)
     {
-        int count = value is int i ? i : 0;
-        return count > 0 ? System.Windows.Visibility.Visible : System.Windows.Visibility.Collapsed;
+        return ZeroToVisibilityConverter.IsZero(value)
+            ? System.Windows.Visibility.Collapsed
+            : System.Windows.Visibility.Visible;
     }
 
     public object ConvertBack(object value, Type targetType, object parameter, CultureInfo culture)
@@ -160,19 +191,20 @@ public class BoolToTextWrappingConverter : IValueConverter
 
 public class FileSizeConverter : IValueConverter
 {
+    private static readonly string[] SizeSuffixes = ["B", "KB", "MB", "GB"];
+
     public object Convert(object value, Type targetType, object parameter, CultureInfo culture)
     {
         if (value is long bytes)
         {
-            string[] sizes = ["B", "KB", "MB", "GB"];
             int order = 0;
             double size = bytes;
-            while (size >= 1024 && order < sizes.Length - 1)
+            while (size >= 1024 && order < SizeSuffixes.Length - 1)
             {
                 order++;
                 size /= 1024;
             }
-            return $"{size:0.##} {sizes[order]}";
+            return $"{size:0.##} {SizeSuffixes[order]}";
         }
         return "0 B";
     }
@@ -207,26 +239,26 @@ public class CategoryToColorConverter : IValueConverter
     private static readonly SolidColorBrush DockBrush       = Freeze(new SolidColorBrush(Color.FromRgb(171, 71, 188)));   // Purple
     private static readonly SolidColorBrush UtilityBrush    = Freeze(new SolidColorBrush(Color.FromRgb(0, 150, 214)));    // HP Blue
     private static readonly SolidColorBrush DefaultBrush    = Freeze(new SolidColorBrush(Color.FromRgb(158, 158, 158)));  // Gray
+    private static readonly Dictionary<string, SolidColorBrush> CategoryBrushes = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ["driver"] = DriverBrush,
+        ["bios"] = BiosBrush,
+        ["firmware"] = FirmwareBrush,
+        ["software"] = SoftwareBrush,
+        ["dock"] = DockBrush,
+        ["accessory"] = DockBrush,
+        ["utility"] = UtilityBrush,
+        ["diagnostic"] = UtilityBrush,
+        ["manageability"] = UtilityBrush
+    };
 
     private static SolidColorBrush Freeze(SolidColorBrush brush) { brush.Freeze(); return brush; }
 
     public object Convert(object value, Type targetType, object parameter, CultureInfo culture)
     {
-        if (value is string category)
+        if (value is string category && CategoryBrushes.TryGetValue(category.Trim(), out var brush))
         {
-            return category.ToLowerInvariant() switch
-            {
-                "driver"       => DriverBrush,
-                "bios"         => BiosBrush,
-                "firmware"     => FirmwareBrush,
-                "software"     => SoftwareBrush,
-                "dock"         => DockBrush,
-                "accessory"    => DockBrush,
-                "utility"      => UtilityBrush,
-                "diagnostic"   => UtilityBrush,
-                "manageability" => UtilityBrush,
-                _              => DefaultBrush
-            };
+            return brush;
         }
         return DefaultBrush;
     }

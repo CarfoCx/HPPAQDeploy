@@ -1,3 +1,4 @@
+using System.Net;
 using System.Text.Json;
 using HPPAQDeploy.Core.Interfaces;
 using HPPAQDeploy.Core.Models;
@@ -14,31 +15,94 @@ public sealed class AgentFileClient : IAgentClient
     };
 
     private readonly ILogger _logger = Log.ForContext<AgentFileClient>();
+    private readonly IFileTransfer? _fileTransfer;
+    private readonly Func<string, string> _getJobsPath;
+    private readonly Func<string, string> _getResultsPath;
 
-    public Task<string> SubmitScanAsync(string hostname, AgentJob job, CancellationToken ct)
+    public AgentFileClient(IFileTransfer fileTransfer)
+        : this(fileTransfer, GetJobsUnc, GetResultsUnc)
     {
+    }
+
+    internal AgentFileClient(Func<string, string> getJobsPath, Func<string, string> getResultsPath)
+        : this(null, getJobsPath, getResultsPath)
+    {
+    }
+
+    internal AgentFileClient(
+        IFileTransfer? fileTransfer,
+        Func<string, string> getJobsPath,
+        Func<string, string> getResultsPath)
+    {
+        _fileTransfer = fileTransfer;
+        _getJobsPath = getJobsPath ?? throw new ArgumentNullException(nameof(getJobsPath));
+        _getResultsPath = getResultsPath ?? throw new ArgumentNullException(nameof(getResultsPath));
+    }
+
+    public Task<string> SubmitScanAsync(
+        string hostname,
+        NetworkCredential credential,
+        AgentJob job,
+        CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(job);
         job.Type = AgentJobType.Scan;
-        return SubmitAsync(hostname, job, ct);
+        return SubmitAsync(hostname, credential, job, ct);
     }
 
-    public Task<string> SubmitInstallAsync(string hostname, AgentJob job, CancellationToken ct)
+    public Task<string> SubmitInstallAsync(
+        string hostname,
+        NetworkCredential credential,
+        AgentJob job,
+        CancellationToken ct)
     {
+        ArgumentNullException.ThrowIfNull(job);
         job.Type = AgentJobType.Install;
-        return SubmitAsync(hostname, job, ct);
+        return SubmitAsync(hostname, credential, job, ct);
     }
 
-    public async Task<AgentJobResult?> TryGetResultAsync(string hostname, string jobId, CancellationToken ct)
+    public async Task<AgentJobResult?> TryGetResultAsync(
+        string hostname,
+        NetworkCredential credential,
+        string jobId,
+        CancellationToken ct)
     {
-        var resultPath = Path.Combine(GetResultsUnc(hostname), $"{jobId}.json");
+        ValidateHostname(hostname);
+        ArgumentNullException.ThrowIfNull(credential);
+        ValidateJobId(jobId);
+        await using var remoteSession = await OpenRemoteSessionAsync(hostname, credential, ct)
+            .ConfigureAwait(false);
+        var resultPath = Path.Combine(_getResultsPath(hostname), $"{jobId}.json");
         if (!File.Exists(resultPath))
             return null;
 
         try
         {
-            await using var stream = File.OpenRead(resultPath);
-            return await JsonSerializer.DeserializeAsync<AgentJobResult>(stream, JsonOptions, ct);
+            await using var stream = new FileStream(
+                resultPath,
+                FileMode.Open,
+                FileAccess.Read,
+                FileShare.ReadWrite | FileShare.Delete,
+                bufferSize: 4096,
+                useAsync: true);
+            var result = await JsonSerializer.DeserializeAsync<AgentJobResult>(stream, JsonOptions, ct)
+                .ConfigureAwait(false);
+
+            if (result is not null &&
+                !string.IsNullOrWhiteSpace(result.JobId) &&
+                !string.Equals(result.JobId, jobId, StringComparison.Ordinal))
+            {
+                _logger.Warning(
+                    "Ignoring result file for {JobId} on {Hostname} because it contains JobId {ActualJobId}",
+                    jobId,
+                    hostname,
+                    result.JobId);
+                return null;
+            }
+
+            return result;
         }
-        catch (IOException ex) when (ex is not FileNotFoundException)
+        catch (IOException ex)
         {
             // File may still be written by agent — retry on next poll
             _logger.Debug(ex, "Result file for {JobId} on {Hostname} not ready yet", jobId, hostname);
@@ -46,106 +110,115 @@ public sealed class AgentFileClient : IAgentClient
         }
         catch (JsonException ex)
         {
-            _logger.Warning(ex, "Corrupt result file for {JobId} on {Hostname}", jobId, hostname);
-            // Delete the corrupt file so it doesn't block future checks
-            try { File.Delete(resultPath); } catch { }
+            // Older agents wrote directly to the final path, so malformed JSON can
+            // simply mean the writer has not finished. Leave it for the next poll.
+            _logger.Debug(ex, "Result file for {JobId} on {Hostname} is not complete yet", jobId, hostname);
             return null;
         }
     }
 
-    public Task<string> GetJobStateAsync(string hostname, string jobId, CancellationToken ct)
+    public async Task<string> GetJobStateAsync(
+        string hostname,
+        NetworkCredential credential,
+        string jobId,
+        CancellationToken ct)
     {
+        ValidateHostname(hostname);
+        ArgumentNullException.ThrowIfNull(credential);
+        ValidateJobId(jobId);
         ct.ThrowIfCancellationRequested();
+        await using var remoteSession = await OpenRemoteSessionAsync(hostname, credential, ct)
+            .ConfigureAwait(false);
 
         try
         {
-            if (File.Exists(Path.Combine(GetResultsUnc(hostname), $"{jobId}.json")))
-                return Task.FromResult("result ready");
+            if (File.Exists(Path.Combine(_getResultsPath(hostname), $"{jobId}.json")))
+                return "result ready";
 
-            if (File.Exists(Path.Combine(GetJobsUnc(hostname), $"{jobId}.running")))
-                return Task.FromResult("running");
+            if (File.Exists(Path.Combine(_getJobsPath(hostname), $"{jobId}.running")))
+                return "running";
 
-            if (File.Exists(Path.Combine(GetJobsUnc(hostname), $"{jobId}.json")))
-                return Task.FromResult("queued");
+            if (File.Exists(Path.Combine(_getJobsPath(hostname), $"{jobId}.json")))
+                return "queued";
         }
         catch (IOException ex)
         {
             _logger.Debug(ex, "IO error checking job state for {JobId} on {Hostname}", jobId, hostname);
-            return Task.FromResult("checking");
+            return "checking";
         }
 
-        return Task.FromResult("job file not found");
+        return "job file not found";
     }
 
-    private async Task<string> SubmitAsync(string hostname, AgentJob job, CancellationToken ct)
+    private async Task<string> SubmitAsync(
+        string hostname,
+        NetworkCredential credential,
+        AgentJob job,
+        CancellationToken ct)
     {
+        ValidateHostname(hostname);
+        ArgumentNullException.ThrowIfNull(credential);
+        ArgumentNullException.ThrowIfNull(job);
         if (string.IsNullOrWhiteSpace(job.Id))
             job.Id = Guid.NewGuid().ToString("N");
+        ValidateJobId(job.Id);
+        await using var remoteSession = await OpenRemoteSessionAsync(hostname, credential, ct)
+            .ConfigureAwait(false);
 
-        var jobsPath = GetJobsUnc(hostname);
+        var jobsPath = _getJobsPath(hostname);
         Directory.CreateDirectory(jobsPath);
-        Directory.CreateDirectory(GetResultsUnc(hostname));
-
-        // Clean up stale job files for THIS job type before submitting
-        // This prevents the agent from processing old leftover jobs
-        CleanStaleJobFiles(jobsPath, job.Type);
+        Directory.CreateDirectory(_getResultsPath(hostname));
 
         var finalPath = Path.Combine(jobsPath, $"{job.Id}.json");
-        var tempPath = finalPath + ".tmp";
+        var tempPath = finalPath + $".{Guid.NewGuid():N}.tmp";
 
-        await File.WriteAllTextAsync(tempPath, JsonSerializer.Serialize(job, JsonOptions), ct);
-        File.Move(tempPath, finalPath, overwrite: true);
+        try
+        {
+            await File.WriteAllTextAsync(tempPath, JsonSerializer.Serialize(job, JsonOptions), ct)
+                .ConfigureAwait(false);
+            File.Move(tempPath, finalPath, overwrite: false);
+        }
+        finally
+        {
+            try { File.Delete(tempPath); } catch { }
+        }
 
         _logger.Information("Submitted agent job {JobId} ({Type}) to {Hostname}", job.Id, job.Type, hostname);
         return job.Id;
     }
 
-    /// <summary>
-    /// Removes old .running files and stale job files of the same type
-    /// that might interfere with new job processing.
-    /// </summary>
-    private void CleanStaleJobFiles(string jobsPath, AgentJobType type)
+    private Task<IRemoteFileSession?> OpenRemoteSessionAsync(
+        string hostname,
+        NetworkCredential credential,
+        CancellationToken ct)
     {
-        try
-        {
-            // Clean up any stale .running files (agent crashed/timed out on previous run)
-            foreach (var runningFile in Directory.GetFiles(jobsPath, "*.running"))
-            {
-                try
-                {
-                    var age = DateTime.UtcNow - File.GetLastWriteTimeUtc(runningFile);
-                    if (age.TotalMinutes > 10)
-                    {
-                        File.Delete(runningFile);
-                        _logger.Debug("Deleted stale running file: {File}", Path.GetFileName(runningFile));
-                    }
-                }
-                catch { }
-            }
+        if (_fileTransfer is null)
+            return Task.FromResult<IRemoteFileSession?>(null);
 
-            // Clean up old job files of the same type that are more than 5 minutes old
-            foreach (var jobFile in Directory.GetFiles(jobsPath, "*.json"))
-            {
-                try
-                {
-                    var age = DateTime.UtcNow - File.GetLastWriteTimeUtc(jobFile);
-                    if (age.TotalMinutes > 5)
-                    {
-                        var content = File.ReadAllText(jobFile);
-                        if (content.Contains($"\"{type}\"", StringComparison.OrdinalIgnoreCase))
-                        {
-                            File.Delete(jobFile);
-                            _logger.Debug("Deleted stale job file: {File}", Path.GetFileName(jobFile));
-                        }
-                    }
-                }
-                catch { }
-            }
-        }
-        catch (Exception ex)
-        {
-            _logger.Debug(ex, "Error cleaning stale job files");
-        }
+        return OpenRemoteSessionCoreAsync(hostname, credential, ct);
+    }
+
+    private async Task<IRemoteFileSession?> OpenRemoteSessionCoreAsync(
+        string hostname,
+        NetworkCredential credential,
+        CancellationToken ct) =>
+        await _fileTransfer!.OpenAuthenticatedSessionAsync(hostname, credential, ct)
+            .ConfigureAwait(false);
+
+    private static void ValidateHostname(string hostname)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(hostname);
+        if (hostname.Length > 255 ||
+            hostname is "." or ".." ||
+            hostname.Any(c => !char.IsAsciiLetterOrDigit(c) && c is not '-' and not '_' and not '.'))
+            throw new ArgumentException("Hostname contains invalid path characters.", nameof(hostname));
+    }
+
+    private static void ValidateJobId(string jobId)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(jobId);
+        if (jobId.Length > 128 || jobId.Any(c => !char.IsAsciiLetterOrDigit(c) && c is not '-' and not '_'))
+            throw new ArgumentException("Job ID contains invalid path characters.", nameof(jobId));
     }
 
     private static string GetJobsUnc(string hostname)

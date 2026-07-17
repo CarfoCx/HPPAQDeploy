@@ -180,19 +180,19 @@ public partial class CredentialManagerViewModel : ObservableObject
     }
 
     [RelayCommand]
-    private async Task DeleteCredentialAsync()
+    private async Task DeleteCredentialAsync(Credential? credential)
     {
-        if (SelectedCredential is null) return;
+        if (credential is null) return;
 
         if (!DialogHelper.Confirm(
-            $"Delete credential '{SelectedCredential.Label}'?\nThis cannot be undone.",
+            $"Delete credential '{credential.Label}'?\nThis cannot be undone.",
             "Delete Credential"))
             return;
 
         try
         {
-            var label = SelectedCredential.Label;
-            await _credentialStore.DeleteAsync(SelectedCredential.Id);
+            var label = credential.Label;
+            await _credentialStore.DeleteAsync(credential.Id);
             ShowStatus($"Credential '{label}' deleted.");
             Log.Information("Credential deleted: {Label}", label);
             await LoadCredentialsAsync();
@@ -273,7 +273,8 @@ public partial class CredentialManagerViewModel : ObservableObject
     [RelayCommand]
     private async Task TestCredentialAsync()
     {
-        if (SelectedCredential is null)
+        var selectedCredential = SelectedCredential;
+        if (selectedCredential is null)
         {
             TestResult = "Please select a credential to test.";
             WmiResult = "";
@@ -296,10 +297,10 @@ public partial class CredentialManagerViewModel : ObservableObject
 
         try
         {
-            var networkCred = await _credentialStore.DecryptAsync(SelectedCredential);
+            var networkCred = await _credentialStore.DecryptAsync(selectedCredential);
             var host = TestHostInput.Trim();
 
-            var wmiTask = Task.Run(async () =>
+            async Task<string> TestWmiAsync()
             {
                 try
                 {
@@ -310,9 +311,9 @@ public partial class CredentialManagerViewModel : ObservableObject
                 {
                     return $"Failed ({ex.Message})";
                 }
-            });
+            }
 
-            var smbTask = Task.Run(async () =>
+            async Task<string> TestSmbAsync()
             {
                 try
                 {
@@ -323,16 +324,20 @@ public partial class CredentialManagerViewModel : ObservableObject
                 {
                     return $"Failed ({ex.Message})";
                 }
-            });
+            }
 
+            var wmiTask = TestWmiAsync();
+            var smbTask = TestSmbAsync();
             await Task.WhenAll(wmiTask, smbTask);
+            var wmiResult = await wmiTask;
+            var smbResult = await smbTask;
 
             // Normalize badge values for DataTrigger matching; keep detail in TestResult
-            WmiResult = wmiTask.Result.StartsWith("Failed") ? "Failed" : wmiTask.Result;
-            SmbResult = smbTask.Result.StartsWith("Failed") ? "Failed" : smbTask.Result;
-            TestResult = $"WMI: {wmiTask.Result}, SMB: {smbTask.Result}";
+            WmiResult = wmiResult.StartsWith("Failed") ? "Failed" : wmiResult;
+            SmbResult = smbResult.StartsWith("Failed") ? "Failed" : smbResult;
+            TestResult = $"WMI: {wmiResult}, SMB: {smbResult}";
             Log.Information("Credential test for {Label} against {Host}: WMI={Wmi}, SMB={Smb}",
-                SelectedCredential.Label, host, wmiTask.Result, smbTask.Result);
+                selectedCredential.Label, host, wmiResult, smbResult);
         }
         catch (Exception ex)
         {

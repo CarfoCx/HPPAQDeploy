@@ -3,6 +3,7 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:materialDesign="http://materialdesigninxaml.net/winfx/xaml/themes"
         xmlns:converters="clr-namespace:HPPAQDeploy.App.Converters"
+        xmlns:models="clr-namespace:HPPAQDeploy.Core.Models;assembly=HPPAQDeploy.Core"
         Title="Fleet Deployment Monitor"
         Icon="../Resources/app_icon.png"
         Width="1050" Height="650"
@@ -56,13 +57,16 @@
                                                          Foreground="{StaticResource HpBlueBrush}"
                                                          VerticalAlignment="Center" Margin="0,0,8,0" />
                                 <TextBlock Text="{Binding Title}" Style="{StaticResource SectionTitle}"
-                                           VerticalAlignment="Center" />
+                                           VerticalAlignment="Center" MaxWidth="360"
+                                           TextTrimming="CharacterEllipsis"
+                                           ToolTip="{Binding Title}" />
                             </StackPanel>
 
                             <StackPanel DockPanel.Dock="Right" Orientation="Horizontal"
                                         HorizontalAlignment="Right" VerticalAlignment="Center">
                                 <ToggleButton IsChecked="{Binding DataContext.AutoScroll, RelativeSource={RelativeSource AncestorType=Window}}"
                                                ToolTip="Auto-scroll to newest entries"
+                                               AutomationProperties.Name="Auto-scroll to newest log entries"
                                                Style="{StaticResource MaterialDesignFlatPrimaryToggleButton}"
                                                Height="28" Width="28" Padding="0" Margin="0,0,4,0">
                                     <materialDesign:PackIcon Kind="ArrowDownBold" Width="16" Height="16" />
@@ -70,6 +74,7 @@
 
                                 <ToggleButton IsChecked="{Binding DataContext.WordWrap, RelativeSource={RelativeSource AncestorType=Window}}"
                                                ToolTip="Toggle word wrap"
+                                               AutomationProperties.Name="Wrap long log messages"
                                                Style="{StaticResource MaterialDesignFlatPrimaryToggleButton}"
                                                Height="28" Width="28" Padding="0" Margin="0,0,4,0">
                                     <materialDesign:PackIcon Kind="Wrap" Width="16" Height="16" />
@@ -83,8 +88,9 @@
                                         Style="{StaticResource DangerButton}"
                                         Height="26" FontSize="12" Padding="10,2" MinWidth="0" Margin="0,0,4,0" />
 
-                                <Button Command="{Binding DataContext.ExportResultsCommand, RelativeSource={RelativeSource AncestorType=Window}}"
-                                        ToolTip="Export deployment log to CSV file"
+                                <Button Command="{Binding DataContext.ExportSessionLogsCommand, RelativeSource={RelativeSource AncestorType=Window}}"
+                                        CommandParameter="{Binding}"
+                                        ToolTip="Export the visible entries from this session to CSV"
                                         Style="{StaticResource SecondaryButton}"
                                         Height="26" FontSize="12" Padding="10,2" MinWidth="0">
                                     <StackPanel Orientation="Horizontal">
@@ -111,7 +117,8 @@
                                                Style="{StaticResource CaptionText}"
                                                Foreground="{StaticResource TextSecondaryBrush}"
                                                VerticalAlignment="Center" Margin="12,0,0,0"
-                                               TextTrimming="CharacterEllipsis" MaxWidth="300" />
+                                               TextTrimming="CharacterEllipsis" MaxWidth="220"
+                                               ToolTip="{Binding Status}" />
 
                                     <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
                                         <materialDesign:PackIcon Kind="Magnify" Width="16" Height="16"
@@ -121,7 +128,7 @@
                                                  materialDesign:HintAssist.Hint="Filter by device or message..."
                                                  Style="{StaticResource MaterialDesignOutlinedTextBox}"
                                                  Foreground="{StaticResource TextPrimaryBrush}"
-                                                 MinWidth="280" Height="28" FontSize="12"
+                                                 Width="220" Height="28" FontSize="12"
                                                  Padding="6,4" Margin="0,0,12,0"
                                                  VerticalContentAlignment="Center" />
                                         <TextBlock Text="Level:" Style="{StaticResource SubtitleText}"
@@ -154,6 +161,12 @@
                                                   RowHeaderWidth="0"
                                                   SelectionMode="Single"
                                                   Style="{StaticResource ProfessionalDataGrid}"
+                                                  AutomationProperties.Name="Live fleet deployment status"
+                                                  EnableRowVirtualization="True"
+                                                  EnableColumnVirtualization="True"
+                                                  VirtualizingStackPanel.IsVirtualizing="True"
+                                                  VirtualizingStackPanel.VirtualizationMode="Recycling"
+                                                  ScrollViewer.CanContentScroll="True"
                                                   ScrollViewer.VerticalScrollBarVisibility="Auto"
                                                   ScrollViewer.HorizontalScrollBarVisibility="Auto">
                                             <DataGrid.Columns>
@@ -180,48 +193,29 @@
                                                     <DataGridTemplateColumn.CellTemplate>
                                                         <DataTemplate>
                                                             <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
-                                                                <ProgressBar 
-                                                                    Style="{StaticResource MaterialDesignCircularProgressBar}"
-                                                                    Value="{Binding Progress}" 
+                                                                <ProgressBar Value="{Binding Progress}"
                                                                     Width="14" Height="14" Margin="0,0,6,0"
-                                                                    Foreground="{StaticResource HpBlueBrush}"
-                                                                    RenderTransformOrigin="0.5,0.5">
-                                                                    <ProgressBar.RenderTransform>
-                                                                        <RotateTransform x:Name="Rotation" Angle="0" />
-                                                                    </ProgressBar.RenderTransform>
-                                                                    <ProgressBar.Resources>
+                                                                    Foreground="{StaticResource HpBlueBrush}">
+                                                                    <ProgressBar.Style>
                                                                         <Style TargetType="ProgressBar" BasedOn="{StaticResource MaterialDesignCircularProgressBar}">
                                                                             <Setter Property="Visibility" Value="Collapsed" />
                                                                             <Setter Property="IsIndeterminate" Value="False" />
                                                                             <Style.Triggers>
-                                                                                <DataTrigger Binding="{Binding Status}" Value="Scanning">
+                                                                                <DataTrigger Binding="{Binding Status}" Value="{x:Static models:DeviceStatus.Scanning}">
                                                                                     <Setter Property="Visibility" Value="Visible" />
                                                                                     <Setter Property="IsIndeterminate" Value="True" />
                                                                                 </DataTrigger>
-                                                                                <DataTrigger Binding="{Binding Status}" Value="Analyzing">
+                                                                                <DataTrigger Binding="{Binding Status}" Value="{x:Static models:DeviceStatus.Analyzing}">
                                                                                     <Setter Property="Visibility" Value="Visible" />
                                                                                     <Setter Property="IsIndeterminate" Value="True" />
                                                                                 </DataTrigger>
-                                                                                <DataTrigger Binding="{Binding Status}" Value="Deploying">
+                                                                                <DataTrigger Binding="{Binding Status}" Value="{x:Static models:DeviceStatus.Deploying}">
                                                                                     <Setter Property="Visibility" Value="Visible" />
                                                                                     <Setter Property="IsIndeterminate" Value="False" />
                                                                                 </DataTrigger>
-                                                                                <Trigger Property="Visibility" Value="Visible">
-                                                                                    <Trigger.EnterActions>
-                                                                                        <BeginStoryboard x:Name="SpinStoryboard">
-                                                                                            <Storyboard>
-                                                                                                <DoubleAnimation Storyboard.TargetProperty="(UIElement.RenderTransform).(RotateTransform.Angle)"
-                                                                                                                 From="0" To="360" Duration="0:0:2" RepeatBehavior="Forever" />
-                                                                                            </Storyboard>
-                                                                                        </BeginStoryboard>
-                                                                                    </Trigger.EnterActions>
-                                                                                    <Trigger.ExitActions>
-                                                                                        <StopStoryboard BeginStoryboardName="SpinStoryboard" />
-                                                                                    </Trigger.ExitActions>
-                                                                                </Trigger>
                                                                             </Style.Triggers>
                                                                         </Style>
-                                                                    </ProgressBar.Resources>
+                                                                    </ProgressBar.Style>
                                                                 </ProgressBar>
                                                                 <Border CornerRadius="3" Padding="6,2" HorizontalAlignment="Left"
                                                                         Background="{StaticResource DividerBrush}">
@@ -252,21 +246,40 @@
                                 <Border Style="{StaticResource AppCard}" Padding="8" Margin="0,8,0,0">
                                     <Grid>
                                         <!-- Log entries -->
-                                        <ItemsControl ItemsSource="{Binding FilteredLogs}"
-                                                      FontFamily="Consolas">
-                                            <ItemsControl.Template>
-                                                <ControlTemplate TargetType="ItemsControl">
-                                                    <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Auto">
-                                                        <ItemsPresenter />
-                                                    </ScrollViewer>
-                                                </ControlTemplate>
-                                            </ItemsControl.Template>
-                                            <ItemsControl.ItemsPanel>
+                                        <ListBox ItemsSource="{Binding FilteredLogs}"
+                                                 FontFamily="Consolas"
+                                                 Background="Transparent"
+                                                 BorderThickness="0"
+                                                 AutomationProperties.Name="Technical deployment logs"
+                                                 VirtualizingStackPanel.IsVirtualizing="True"
+                                                 VirtualizingStackPanel.VirtualizationMode="Recycling"
+                                                 ScrollViewer.CanContentScroll="True"
+                                                 ScrollViewer.VerticalScrollBarVisibility="Auto"
+                                                 Loaded="LogList_Loaded"
+                                                 Unloaded="LogList_Unloaded">
+                                            <ListBox.Style>
+                                                <Style TargetType="ListBox">
+                                                    <Setter Property="ScrollViewer.HorizontalScrollBarVisibility" Value="Auto" />
+                                                    <Style.Triggers>
+                                                        <DataTrigger Binding="{Binding DataContext.WordWrap, RelativeSource={RelativeSource AncestorType=Window}}" Value="True">
+                                                            <Setter Property="ScrollViewer.HorizontalScrollBarVisibility" Value="Disabled" />
+                                                        </DataTrigger>
+                                                    </Style.Triggers>
+                                                </Style>
+                                            </ListBox.Style>
+                                            <ListBox.ItemsPanel>
                                                 <ItemsPanelTemplate>
                                                     <VirtualizingStackPanel />
                                                 </ItemsPanelTemplate>
-                                            </ItemsControl.ItemsPanel>
-                                            <ItemsControl.ItemTemplate>
+                                            </ListBox.ItemsPanel>
+                                            <ListBox.ItemContainerStyle>
+                                                <Style TargetType="ListBoxItem">
+                                                    <Setter Property="Padding" Value="0" />
+                                                    <Setter Property="Margin" Value="0" />
+                                                    <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+                                                </Style>
+                                            </ListBox.ItemContainerStyle>
+                                            <ListBox.ItemTemplate>
                                                 <DataTemplate>
                                                     <Border Padding="2,4" Margin="0,1" Background="{StaticResource SubtleBackgroundBrush}" CornerRadius="3">
                                                         <Grid>
@@ -279,12 +292,13 @@
                                                             <Ellipse Width="8" Height="8" Margin="4,0,8,0" Fill="{Binding Level, Converter={StaticResource StatusToColor}}" />
                                                             <TextBlock Grid.Column="1" Text="{Binding Timestamp, StringFormat='{}{0:HH:mm:ss}'}" Foreground="White" Opacity="0.6" Margin="0,0,8,0" />
                                                             <TextBlock Grid.Column="2" Text="{Binding DeviceName}" FontWeight="Bold" Foreground="{StaticResource HpBlueBrush}" Margin="0,0,8,0" />
-                                                            <TextBlock Grid.Column="3" Text="{Binding Message}" Foreground="White" TextWrapping="Wrap" />
+                                                            <TextBlock Grid.Column="3" Text="{Binding Message}" Foreground="White"
+                                                                       TextWrapping="{Binding DataContext.WordWrap, RelativeSource={RelativeSource AncestorType=Window}, Converter={StaticResource BoolToTextWrapping}}" />
                                                         </Grid>
                                                     </Border>
                                                 </DataTemplate>
-                                            </ItemsControl.ItemTemplate>
-                                        </ItemsControl>
+                                            </ListBox.ItemTemplate>
+                                        </ListBox>
                                     </Grid>
                                 </Border>
                             </TabItem>

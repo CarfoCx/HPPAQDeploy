@@ -54,10 +54,12 @@ public static class ReportGenerator
     {
         var deviceList = devices.ToList();
         var totalDevices = deviceList.Count;
-        var devicesUpToDate = deviceList.Count(d => (d.Recommendations?.Count ?? 0) == 0);
+        var analyzedDevices = deviceList.Count(d => d.LastAnalyzed.HasValue);
+        var devicesUpToDate = deviceList.Count(d =>
+            d.LastAnalyzed.HasValue && (d.Recommendations?.Count ?? 0) == 0);
         var devicesWithUpdates = deviceList.Count(d => (d.Recommendations?.Count ?? 0) > 0);
-        var compliancePercent = totalDevices > 0
-            ? Math.Round((double)devicesUpToDate / totalDevices * 100, 1)
+        var compliancePercent = analyzedDevices > 0
+            ? Math.Round((double)devicesUpToDate / analyzedDevices * 100, 1)
             : 0;
 
         var allRecommendations = deviceList.SelectMany(d => d.Recommendations ?? []).ToList();
@@ -309,8 +311,16 @@ public static class ReportGenerator
 
     private static string H(string? value) => HttpUtility.HtmlEncode(value ?? "");
 
-    private static string Esc(string? val) =>
-        val?.Contains(',') == true || val?.Contains('"') == true
-            ? $"\"{val.Replace("\"", "\"\"")}\""
-            : val ?? "";
+    private static string Esc(string? val)
+    {
+        var value = val ?? string.Empty;
+
+        // Prevent spreadsheet formula execution when a report is opened in Excel.
+        if (value.Length > 0 && value[0] is '=' or '+' or '-' or '@' or '\t' or '\r' or '\n')
+            value = "'" + value;
+
+        return value.IndexOfAny([',', '"', '\r', '\n']) >= 0
+            ? $"\"{value.Replace("\"", "\"\"")}\""
+            : value;
+    }
 }

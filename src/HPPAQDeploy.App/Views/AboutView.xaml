@@ -160,7 +160,7 @@
                         <StackPanel>
                             <TextBlock Text="Deploy Updates" Style="{StaticResource BodyText}" FontWeight="SemiBold" FontSize="15" />
                             <TextBlock Style="{StaticResource BodyText}" TextWrapping="Wrap" Foreground="{StaticResource TextSecondaryBrush}">
-                                After scanning, click a device to see its available updates. Use the checkboxes to select specific updates, or leave all checked. Click "Install on Selected" for one device, or "Install All Updates" for the entire group. Some updates may require a reboot — use the reboot controls to restart devices remotely.
+                                After scanning, click a device to review its available updates. Recommendations start unchecked. Check the remotely installable updates you want, then choose "Install Selected" for that device. Choose "Install All Updates" to deploy every remotely installable update across the group regardless of checkbox state; updates marked "Manual install only" are skipped. Some updates may require a reboot — use the reboot controls to restart devices remotely.
                             </TextBlock>
                         </StackPanel>
                     </DockPanel>

@@ -52,6 +52,7 @@
                                VerticalAlignment="Center" Margin="0,0,6,0" />
                     <ComboBox ItemsSource="{Binding ActionFilterOptions}"
                               SelectedItem="{Binding SelectedActionFilter}"
+                              AutomationProperties.Name="Deployment action filter"
                               Foreground="{StaticResource TextPrimaryBrush}"
                               MinWidth="100" Height="28" FontSize="12" />
                 </StackPanel>
@@ -62,6 +63,7 @@
                                VerticalAlignment="Center" Margin="0,0,6,0" />
                     <ComboBox ItemsSource="{Binding DateRangeOptions}"
                               SelectedItem="{Binding SelectedDateRange}"
+                              AutomationProperties.Name="Deployment date range"
                               Foreground="{StaticResource TextPrimaryBrush}"
                               MinWidth="120" Height="28" FontSize="12" />
                 </StackPanel>
@@ -73,6 +75,7 @@
                                              VerticalAlignment="Center" Margin="4,0,8,0" DockPanel.Dock="Left" />
                     <TextBox Text="{Binding FilterText, UpdateSourceTrigger=PropertyChanged, Delay=250}"
                              materialDesign:HintAssist.Hint="Filter by hostname, IP, update name, SoftPaq ID..."
+                             AutomationProperties.Name="Filter deployment history"
                              Style="{StaticResource FilterBarTextBox}" />
                 </DockPanel>
             </DockPanel>
@@ -175,6 +178,10 @@
                       Style="{StaticResource ProfessionalDataGrid}"
                       VirtualizingStackPanel.IsVirtualizing="True"
                       VirtualizingStackPanel.VirtualizationMode="Recycling"
+                      ScrollViewer.CanContentScroll="True"
+                      EnableRowVirtualization="True"
+                      EnableColumnVirtualization="True"
+                      AutomationProperties.Name="Deployment history"
                       CanUserResizeColumns="True"
                       SelectionMode="Single">
                 <DataGrid.RowStyle>
@@ -240,6 +247,7 @@
 
         <!-- Status -->
         <TextBlock Grid.Row="4" Text="{Binding StatusMessage}" Margin="4,8,0,0"
-                   Style="{StaticResource SubtitleText}" Foreground="{StaticResource AccentGreenBrush}" />
+                   Style="{StaticResource SubtitleText}" Foreground="{StaticResource AccentGreenBrush}"
+                   AutomationProperties.LiveSetting="Polite" />
     </Grid>
 </UserControl>

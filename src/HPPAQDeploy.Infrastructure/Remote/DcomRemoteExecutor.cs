@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Management;
 using System.Net;
 using HPPAQDeploy.Core.Interfaces;
@@ -15,13 +16,17 @@ public class DcomRemoteExecutor : IRemoteExecutor
 {
     private readonly ILogger _logger = Log.ForContext<DcomRemoteExecutor>();
     private readonly CircuitBreaker _circuitBreaker;
+    private readonly IFileTransfer _fileTransfer;
     private static readonly TimeSpan RemoteStartGracePeriod = TimeSpan.FromMinutes(5);
     private static readonly TimeSpan FallbackLaunchDelay = TimeSpan.FromSeconds(75);
     private static readonly TimeSpan HpiaProgressStallTimeout = TimeSpan.FromMinutes(8);
+    private static readonly ConcurrentDictionary<string, SemaphoreSlim> HostLocks =
+        new(StringComparer.OrdinalIgnoreCase);
 
-    public DcomRemoteExecutor(CircuitBreaker circuitBreaker)
+    public DcomRemoteExecutor(CircuitBreaker circuitBreaker, IFileTransfer fileTransfer)
     {
         _circuitBreaker = circuitBreaker;
+        _fileTransfer = fileTransfer;
     }
 
     public async Task<RemoteProcessResult> ExecuteAsync(
@@ -32,6 +37,36 @@ public class DcomRemoteExecutor : IRemoteExecutor
         TimeSpan timeout,
         CancellationToken ct,
         IProgress<string>? progress = null)
+    {
+        ValidateHostname(hostname);
+        var hostLock = HostLocks.GetOrAdd(hostname, _ => new SemaphoreSlim(1, 1));
+        await hostLock.WaitAsync(ct).ConfigureAwait(false);
+        try
+        {
+            return await ExecuteSerializedAsync(
+                    hostname,
+                    cred,
+                    commandLine,
+                    workingDirectory,
+                    timeout,
+                    ct,
+                    progress)
+                .ConfigureAwait(false);
+        }
+        finally
+        {
+            hostLock.Release();
+        }
+    }
+
+    private async Task<RemoteProcessResult> ExecuteSerializedAsync(
+        string hostname,
+        NetworkCredential cred,
+        string commandLine,
+        string? workingDirectory,
+        TimeSpan timeout,
+        CancellationToken ct,
+        IProgress<string>? progress)
     {
         if (_circuitBreaker.IsOpen(hostname))
         {
@@ -93,6 +128,12 @@ public class DcomRemoteExecutor : IRemoteExecutor
         var scope = await Task.Run(() => WmiConnectionFactory.CreateScope(hostname, cred), ct)
             .ConfigureAwait(false);
 
+        // Keep the selected credential mapped for the direct UNC launcher,
+        // progress, and exit-code operations performed throughout this run.
+        await using var remoteFileSession = await _fileTransfer
+            .OpenAuthenticatedSessionAsync(hostname, cred, ct)
+            .ConfigureAwait(false);
+
         // Wrap command to capture exit code to a temp file.
         // Use a batch file approach to avoid nested quoting issues with cmd /c.
         var remoteTempPath = AppSettings.RemoteTempPath;
@@ -121,7 +162,8 @@ public class DcomRemoteExecutor : IRemoteExecutor
             var user = cred.UserName;
             var pass = cred.Password;
             var qualifiedUser = !string.IsNullOrEmpty(domain) ? $"{domain}\\{user}" : user;
-            batchLines.Append($"net use \"{sharePath}\" /user:\"{qualifiedUser}\" \"{pass}\" >nul 2>&1\r\n");
+            batchLines.Append(BuildNetUseBatchLine(sharePath, qualifiedUser, pass));
+            batchLines.Append("\r\n");
         }
 
         batchLines.Append($"{commandLine}\r\n");
@@ -158,9 +200,7 @@ public class DcomRemoteExecutor : IRemoteExecutor
         }
         else
         {
-            // Fallback: escape inner quotes for cmd /c
-            var escapedCmd = commandLine.Replace("\"", "\\\"");
-            wrappedCommand = $"cmd /c \"{escapedCmd} & echo %ERRORLEVEL% > {exitCodeFile}\"";
+            wrappedCommand = BuildDirectFallbackCommand(commandLine, exitCodeFile);
         }
 
         // Use a scheduled task to run the command in a proper user session.
@@ -173,10 +213,12 @@ public class DcomRemoteExecutor : IRemoteExecutor
         var vbsContent =
             "Set WshShell = CreateObject(\"WScript.Shell\")\r\n" +
             $"WshShell.Run \"cmd /c \"\"\" & \"{batchFile}\" & \"\"\"\", 0, True\r\n";
+        var useVbsFile = false;
         try
         {
             var uncVbsPath = ConvertToUncPath(hostname, vbsFile);
             File.WriteAllText(uncVbsPath, vbsContent);
+            useVbsFile = true;
         }
         catch (Exception ex)
         {
@@ -187,76 +229,117 @@ public class DcomRemoteExecutor : IRemoteExecutor
         // /it = interactive (run in logged-in user's desktop session — required for HPIA's WPF components)
         // schtasks /tr requires the command to be properly quoted.
         var taskCommand = $"cmd.exe /c \"\"{batchFile}\"\"";
-        var schtasksCreate = $"schtasks /create /tn \"{taskName}\" /tr \"{taskCommand}\" " +
-            $"/sc once /st 00:00 /f /ru \"{taskUser}\" /rp \"{cred.Password}\" /rl highest";
-        var schtasksRun = $"schtasks /run /tn \"{taskName}\"";
-
-        // Create the scheduled task
-        var (createRv, _) = await Task.Run(() =>
-        {
-            using var processClass = new ManagementClass(scope, new ManagementPath("Win32_Process"), null);
-            var inParams = processClass.GetMethodParameters("Create");
-            inParams["CommandLine"] = $"cmd /c {schtasksCreate}";
-            var outParams = processClass.InvokeMethod("Create", inParams, null);
-            uint rv = (uint)outParams["ReturnValue"];
-            uint p = rv == 0 ? (uint)outParams["ProcessId"] : 0;
-            return (rv, p);
-        }, ct).ConfigureAwait(false);
-
-        if (createRv != 0)
-        {
-            _logger.Error("Failed to create scheduled task on {Hostname}, return value {Rv}", hostname, createRv);
-            return new RemoteProcessResult((int)createRv, string.Empty, "Failed to create scheduled task");
-        }
-
-        // Wait for schtasks /create to finish
-        await Task.Delay(2000, ct).ConfigureAwait(false);
+        var schtasksCreate = BuildWindowsCommandLine(
+            "schtasks.exe",
+            "/create", "/tn", taskName, "/tr", taskCommand,
+            "/sc", "once", "/st", "00:00", "/f",
+            "/ru", taskUser, "/rp", cred.Password, "/rl", "highest");
+        var schtasksRun = BuildWindowsCommandLine(
+            "schtasks.exe", "/run", "/tn", taskName);
 
         // Delete any stale exit code file before starting. Deleting it after launch can race
         // a fast HPIA failure and erase the only completion signal.
         var uncExitCodePath = ConvertToUncPath(hostname, exitCodeFile);
         try { if (File.Exists(uncExitCodePath)) File.Delete(uncExitCodePath); } catch (Exception ex) { Log.Debug(ex, "Failed to delete stale exit code file on {Hostname}", hostname); }
-
-        // Run the scheduled task
-        var (runRv, _2) = await Task.Run(() =>
-        {
-            using var processClass = new ManagementClass(scope, new ManagementPath("Win32_Process"), null);
-            var inParams = processClass.GetMethodParameters("Create");
-            inParams["CommandLine"] = $"cmd /c {schtasksRun}";
-            var outParams = processClass.InvokeMethod("Create", inParams, null);
-            uint rv = (uint)outParams["ReturnValue"];
-            uint p = rv == 0 ? (uint)outParams["ProcessId"] : 0;
-            return (rv, p);
-        }, ct).ConfigureAwait(false);
-
-        // Wait for the task to start and find the batch process PID
-        await Task.Delay(2000, ct).ConfigureAwait(false);
-
-        // Find the PID of the cmd.exe running our batch file
         uint pid = 0;
-        var returnValue = runRv;
-        try
+        var startedDirectly = !useBatchFile || !useVbsFile;
+
+        if (startedDirectly)
         {
-            pid = await Task.Run(() =>
+            // When the remote launcher files cannot be created, a scheduled task
+            // that references them can never start useful work. Launch the inline
+            // WMI fallback immediately instead of waiting for the 75-second watchdog.
+            _logger.Warning(
+                "Remote launcher files are unavailable on {Hostname}; starting direct WMI fallback immediately",
+                hostname);
+            progress?.Report($"Remote launcher unavailable on {hostname}; trying direct WMI launch...");
+            pid = await Task.Run(() => StartRemoteProcess(scope, wrappedCommand), ct).ConfigureAwait(false);
+            if (pid == 0)
             {
-                var query = new ObjectQuery(
-                    $"SELECT ProcessId FROM Win32_Process WHERE CommandLine LIKE '%{taskName}%' OR CommandLine LIKE '%run_hpia.bat%'");
-                using var searcher = new ManagementObjectSearcher(scope, query);
-                using var results = searcher.Get();
-                foreach (ManagementObject obj in results)
-                {
-                    using (obj)
-                        return (uint)obj["ProcessId"];
-                }
-                return (uint)0;
-            }, ct).ConfigureAwait(false);
+                return new RemoteProcessResult(
+                    -1,
+                    string.Empty,
+                    "Remote launcher files could not be created and direct WMI launch failed");
+            }
+
+            _logger.Information("Started immediate fallback WMI process on {Hostname}, PID {Pid}", hostname, pid);
         }
-        catch (Exception ex) { Log.Debug("Could not find batch process PID on {Hostname}, will poll by exit code file instead: {Error}", hostname, ex.Message); }
+        else
+        {
+            // Create the scheduled task
+            var (createRv, _) = await Task.Run(() =>
+            {
+                using var processClass = new ManagementClass(scope, new ManagementPath("Win32_Process"), null);
+                var inParams = processClass.GetMethodParameters("Create");
+                // Launch schtasks directly so cmd.exe cannot expand characters in
+                // usernames or passwords.
+                inParams["CommandLine"] = schtasksCreate;
+                var outParams = processClass.InvokeMethod("Create", inParams, null);
+                uint rv = (uint)outParams["ReturnValue"];
+                uint p = rv == 0 ? (uint)outParams["ProcessId"] : 0;
+                return (rv, p);
+            }, ct).ConfigureAwait(false);
 
-        // If we couldn't find the PID, poll by checking for the exit code file instead
-        _logger.Information("Scheduled task {TaskName} started on {Hostname}, tracking PID {Pid}", taskName, hostname, pid);
+            if (createRv != 0)
+            {
+                _logger.Error("Failed to create scheduled task on {Hostname}, return value {Rv}", hostname, createRv);
+                return new RemoteProcessResult((int)createRv, string.Empty, "Failed to create scheduled task");
+            }
 
-        progress?.Report($"Scheduled task started on {hostname}");
+            // Wait for schtasks /create to finish
+            await Task.Delay(2000, ct).ConfigureAwait(false);
+
+            // Run the scheduled task
+            var runLaunchResult = await Task.Run(() =>
+            {
+                using var processClass = new ManagementClass(scope, new ManagementPath("Win32_Process"), null);
+                var inParams = processClass.GetMethodParameters("Create");
+                inParams["CommandLine"] = schtasksRun;
+                var outParams = processClass.InvokeMethod("Create", inParams, null);
+                uint rv = (uint)outParams["ReturnValue"];
+                uint p = rv == 0 ? (uint)outParams["ProcessId"] : 0;
+                return (rv, p);
+            }, ct).ConfigureAwait(false);
+
+            if (runLaunchResult.rv != 0)
+            {
+                _logger.Error(
+                    "Failed to start scheduled task command on {Hostname}, return value {Rv}",
+                    hostname,
+                    runLaunchResult.rv);
+                return new RemoteProcessResult(
+                    (int)runLaunchResult.rv,
+                    string.Empty,
+                    "Failed to start scheduled task command");
+            }
+
+            // Wait for the task to start and find the batch process PID
+            await Task.Delay(2000, ct).ConfigureAwait(false);
+
+            // Find the PID of the cmd.exe running our batch file
+            try
+            {
+                pid = await Task.Run(() =>
+                {
+                    var query = new ObjectQuery(
+                        $"SELECT ProcessId FROM Win32_Process WHERE CommandLine LIKE '%{taskName}%' OR CommandLine LIKE '%run_hpia.bat%'");
+                    using var searcher = new ManagementObjectSearcher(scope, query);
+                    using var results = searcher.Get();
+                    foreach (ManagementObject obj in results)
+                    {
+                        using (obj)
+                            return (uint)obj["ProcessId"];
+                    }
+                    return (uint)0;
+                }, ct).ConfigureAwait(false);
+            }
+            catch (Exception ex) { Log.Debug("Could not find batch process PID on {Hostname}, will poll by exit code file instead: {Error}", hostname, ex.Message); }
+
+            // If we couldn't find the PID, poll by checking for the exit code file instead
+            _logger.Information("Scheduled task {TaskName} started on {Hostname}, tracking PID {Pid}", taskName, hostname, pid);
+
+            progress?.Report($"Scheduled task started on {hostname}");
+        }
 
         // Poll for completion by checking if the exit code file appears (batch finished)
 
@@ -271,7 +354,7 @@ public class DcomRemoteExecutor : IRemoteExecutor
         var observedHpiaActivity = false;
 
         bool processRunning = true;
-        bool fallbackStarted = false;
+        bool fallbackStarted = startedDirectly;
         var startTime = DateTime.UtcNow;
         var lastLogTime = DateTime.UtcNow;
         var lastProgressTime = DateTime.UtcNow;
@@ -374,30 +457,44 @@ public class DcomRemoteExecutor : IRemoteExecutor
                 lastLogTime = DateTime.UtcNow;
             }
 
-            // Check if the exit code file has appeared (means the batch completed)
-            try
+            // An immediate WMI fallback may have been selected because the UNC
+            // launcher files were unavailable. In that case File.Exists commonly
+            // returns false (rather than throwing), so track the launcher PID.
+            if (startedDirectly && pid > 0)
             {
-                processRunning = !File.Exists(uncExitCodePath);
-            }
-            catch
-            {
-                // If we can't check the file, fall back to PID-based polling
-                if (pid > 0)
+                try
                 {
-                    try
+                    processRunning = await Task.Run(() => IsRemoteProcessRunning(scope, pid), linkedCt)
+                        .ConfigureAwait(false);
+                }
+                catch (ManagementException ex)
+                {
+                    _logger.Warning(ex, "Error polling direct WMI process on {Hostname}", hostname);
+                    processRunning = false;
+                }
+            }
+            else
+            {
+                // Check if the exit code file has appeared (means the batch completed)
+                try
+                {
+                    processRunning = !File.Exists(uncExitCodePath);
+                }
+                catch
+                {
+                    // If we can't check the file, fall back to PID-based polling
+                    if (pid > 0)
                     {
-                        processRunning = await Task.Run(() =>
+                        try
                         {
-                            var query = new ObjectQuery($"SELECT ProcessId FROM Win32_Process WHERE ProcessId = {pid}");
-                            using var searcher = new ManagementObjectSearcher(scope, query);
-                            using var results = searcher.Get();
-                            return results.Count > 0;
-                        }, linkedCt).ConfigureAwait(false);
-                    }
-                    catch (ManagementException ex)
-                    {
-                        _logger.Warning(ex, "Error polling on {Hostname}", hostname);
-                        processRunning = false;
+                            processRunning = await Task.Run(() => IsRemoteProcessRunning(scope, pid), linkedCt)
+                                .ConfigureAwait(false);
+                        }
+                        catch (ManagementException ex)
+                        {
+                            _logger.Warning(ex, "Error polling on {Hostname}", hostname);
+                            processRunning = false;
+                        }
                     }
                 }
             }
@@ -467,15 +564,22 @@ public class DcomRemoteExecutor : IRemoteExecutor
         // Read exit code from the temp file via SMB
         int exitCode = ReadRemoteExitCode(hostname, cred, exitCodeFile);
 
-        // Clean up batch file and scheduled task
-        if (useBatchFile)
+        // Clean up whichever launcher files were successfully created.
+        if (useBatchFile || useVbsFile)
         {
             try
             {
-                var uncBatchPath = ConvertToUncPath(hostname, batchFile);
-                if (File.Exists(uncBatchPath)) File.Delete(uncBatchPath);
-                var uncVbsPath = ConvertToUncPath(hostname, vbsFile);
-                if (File.Exists(uncVbsPath)) File.Delete(uncVbsPath);
+                if (useBatchFile)
+                {
+                    var uncBatchPath = ConvertToUncPath(hostname, batchFile);
+                    if (File.Exists(uncBatchPath)) File.Delete(uncBatchPath);
+                }
+
+                if (useVbsFile)
+                {
+                    var uncVbsPath = ConvertToUncPath(hostname, vbsFile);
+                    if (File.Exists(uncVbsPath)) File.Delete(uncVbsPath);
+                }
             }
             catch (Exception ex) { Log.Debug(ex, "Failed to clean up batch/VBS files on {Hostname}", hostname); }
         }
@@ -578,6 +682,88 @@ public class DcomRemoteExecutor : IRemoteExecutor
             .Replace("\"", "\"\"");
     }
 
+    internal static string BuildDirectFallbackCommand(string commandLine, string exitCodeFile)
+    {
+        // cmd.exe does not use backslashes to escape quotes. Its doubled outer-quote
+        // form preserves quoted executable and argument paths inside the command.
+        return $"cmd.exe /d /s /c \"{commandLine} & echo %ERRORLEVEL% > \"{exitCodeFile}\"\"";
+    }
+
+    internal static string BuildWindowsCommandLine(string executable, params string[] arguments)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(executable);
+        ArgumentNullException.ThrowIfNull(arguments);
+
+        return string.Join(' ', new[] { QuoteWindowsArgument(executable) }
+            .Concat(arguments.Select(QuoteWindowsArgument)));
+    }
+
+    internal static string BuildNetUseBatchLine(string sharePath, string username, string password)
+    {
+        static string EscapePowerShellLiteral(string value) => value.Replace("'", "''");
+
+        var script =
+            "$netArgs = @('use', '" + EscapePowerShellLiteral(sharePath) +
+            "', '/user:" + EscapePowerShellLiteral(username) +
+            "', '" + EscapePowerShellLiteral(password) + "'); " +
+            "& \"$env:SystemRoot\\System32\\net.exe\" @netArgs | Out-Null; exit $LASTEXITCODE";
+        var encodedScript = Convert.ToBase64String(System.Text.Encoding.Unicode.GetBytes(script));
+
+        // EncodedCommand keeps cmd.exe from expanding %, !, &, quotes, or carets
+        // from credentials before PowerShell passes them as distinct arguments.
+        return "powershell.exe -NoLogo -NoProfile -NonInteractive " +
+            $"-ExecutionPolicy Bypass -EncodedCommand {encodedScript} >nul 2>&1";
+    }
+
+    private static string QuoteWindowsArgument(string argument)
+    {
+        ArgumentNullException.ThrowIfNull(argument);
+        if (argument.Length > 0 &&
+            !argument.Any(char.IsWhiteSpace) &&
+            !argument.Contains('"'))
+        {
+            return argument;
+        }
+
+        var result = new System.Text.StringBuilder(argument.Length + 2);
+        result.Append('"');
+        var backslashCount = 0;
+
+        foreach (var character in argument)
+        {
+            if (character == '\\')
+            {
+                backslashCount++;
+                continue;
+            }
+
+            if (character == '"')
+            {
+                result.Append('\\', (backslashCount * 2) + 1);
+                result.Append('"');
+                backslashCount = 0;
+                continue;
+            }
+
+            result.Append('\\', backslashCount);
+            backslashCount = 0;
+            result.Append(character);
+        }
+
+        // Backslashes immediately before the closing quote must be doubled.
+        result.Append('\\', backslashCount * 2);
+        result.Append('"');
+        return result.ToString();
+    }
+
+    private static bool IsRemoteProcessRunning(ManagementScope scope, uint pid)
+    {
+        var query = new ObjectQuery($"SELECT ProcessId FROM Win32_Process WHERE ProcessId = {pid}");
+        using var searcher = new ManagementObjectSearcher(scope, query);
+        using var results = searcher.Get();
+        return results.Count > 0;
+    }
+
     private void TryKillProcess(ManagementScope scope, uint pid)
     {
         try
@@ -635,9 +821,9 @@ public class DcomRemoteExecutor : IRemoteExecutor
             // Check Downloads directory for SoftPaq folders
             if (Directory.Exists(uncDownloadsDir))
             {
-                var spFolders = Directory.GetDirectories(uncDownloadsDir)
-                    .Select(d => Path.GetFileName(d))
-                    .Where(n => n.StartsWith("sp", StringComparison.OrdinalIgnoreCase))
+                var spFolders = Directory.EnumerateDirectories(uncDownloadsDir)
+                    .Where(path => Path.GetFileName(path).StartsWith("sp", StringComparison.OrdinalIgnoreCase))
+                    .Select(path => new DirectoryInfo(path))
                     .ToList();
 
                 if (spFolders.Count > 0)
@@ -645,14 +831,13 @@ public class DcomRemoteExecutor : IRemoteExecutor
                     lastCount = spFolders.Count;
 
                     // Find the most recently modified folder (currently being worked on)
-                    var currentFolder = Directory.GetDirectories(uncDownloadsDir)
-                        .Where(d => Path.GetFileName(d).StartsWith("sp", StringComparison.OrdinalIgnoreCase))
-                        .OrderByDescending(d => new DirectoryInfo(d).LastWriteTimeUtc)
+                    var currentFolder = spFolders
+                        .OrderByDescending(directory => directory.LastWriteTimeUtc)
                         .FirstOrDefault();
 
                     if (currentFolder != null)
                     {
-                        var folderName = Path.GetFileName(currentFolder);
+                        var folderName = currentFolder.Name;
                         // Parse friendly name: "sp165857_IntelGraphicsDriverandControlPanel" -> "Intel Graphics Driver and Control Panel"
                         var parts = folderName.Split('_', 2);
                         var spId = parts[0];
@@ -671,8 +856,9 @@ public class DcomRemoteExecutor : IRemoteExecutor
             // Check if Reports directory has appeared (means analysis phase is done)
             if (Directory.Exists(uncReportsDir))
             {
-                var reportFiles = Directory.GetFiles(uncReportsDir, "*.json", SearchOption.AllDirectories);
-                if (reportFiles.Length > 0 && lastCount == 0)
+                var hasReport = Directory.EnumerateFiles(
+                    uncReportsDir, "*.json", SearchOption.AllDirectories).Any();
+                if (hasReport && lastCount == 0)
                     return "Analysis complete, generating report...";
             }
         }
@@ -716,8 +902,11 @@ public class DcomRemoteExecutor : IRemoteExecutor
 
         var root = new DirectoryInfo(path);
         candidates.Add(root);
-        candidates.AddRange(root.EnumerateDirectories("*", SearchOption.AllDirectories));
-        candidates.AddRange(root.EnumerateFiles("*", SearchOption.AllDirectories));
+        // Top-level metadata is sufficient for liveness: HPIA creates SoftPaq
+        // folders and report files at these roots. Avoid recursively walking an
+        // expanding UNC tree on every three-second poll.
+        candidates.AddRange(root.EnumerateDirectories("*", SearchOption.TopDirectoryOnly));
+        candidates.AddRange(root.EnumerateFiles("*", SearchOption.TopDirectoryOnly));
     }
 
     private static long GetLengthOrZero(FileSystemInfo item)
@@ -856,7 +1045,8 @@ public class DcomRemoteExecutor : IRemoteExecutor
         {
             using var processClass = new ManagementClass(scope, new ManagementPath("Win32_Process"), null);
             var inParams = processClass.GetMethodParameters("Create");
-            inParams["CommandLine"] = $"cmd /c schtasks /delete /tn \"{taskName}\" /f";
+            inParams["CommandLine"] = BuildWindowsCommandLine(
+                "schtasks.exe", "/delete", "/tn", taskName, "/f");
             processClass.InvokeMethod("Create", inParams, null);
             _logger.Debug("Cleaned up scheduled task {TaskName}", taskName);
         }

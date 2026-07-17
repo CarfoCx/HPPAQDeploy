@@ -15,17 +15,18 @@ namespace HPPAQDeploy.Infrastructure.Security;
 /// </summary>
 public class DpapiCredentialStore : ICredentialStore
 {
-    private readonly AppDbContext _dbContext;
+    private readonly IDbContextFactory<AppDbContext> _dbContextFactory;
     private readonly ILogger _logger = Log.ForContext<DpapiCredentialStore>();
 
-    public DpapiCredentialStore(AppDbContext dbContext)
+    public DpapiCredentialStore(IDbContextFactory<AppDbContext> dbContextFactory)
     {
-        _dbContext = dbContext ?? throw new ArgumentNullException(nameof(dbContext));
+        _dbContextFactory = dbContextFactory ?? throw new ArgumentNullException(nameof(dbContextFactory));
     }
 
     public async Task<IReadOnlyList<Credential>> GetAllAsync(CancellationToken ct = default)
     {
-        return await _dbContext.Credentials
+        await using var dbContext = await _dbContextFactory.CreateDbContextAsync(ct).ConfigureAwait(false);
+        return await dbContext.Credentials
             .AsNoTracking()
             .OrderByDescending(c => c.IsDefault)
             .ThenBy(c => c.Label)
@@ -35,6 +36,7 @@ public class DpapiCredentialStore : ICredentialStore
 
     public async Task SaveAsync(Credential credential, string plainTextPassword, CancellationToken ct = default)
     {
+        ArgumentNullException.ThrowIfNull(credential);
         if (string.IsNullOrEmpty(plainTextPassword))
             throw new ArgumentException("Password cannot be null or empty.", nameof(plainTextPassword));
 
@@ -49,16 +51,17 @@ public class DpapiCredentialStore : ICredentialStore
         credential.IV = entropy;
         credential.Created = DateTime.UtcNow;
 
+        await using var dbContext = await _dbContextFactory.CreateDbContextAsync(ct).ConfigureAwait(false);
         if (credential.Id == 0)
         {
-            _dbContext.Credentials.Add(credential);
+            dbContext.Credentials.Add(credential);
         }
         else
         {
-            _dbContext.Credentials.Update(credential);
+            dbContext.Credentials.Update(credential);
         }
 
-        await _dbContext.SaveChangesAsync(ct).ConfigureAwait(false);
+        await dbContext.SaveChangesAsync(ct).ConfigureAwait(false);
 
         _logger.Information("Saved credential '{Label}' for {Domain}\\{Username}",
             credential.Label, credential.Domain, credential.Username);
@@ -92,14 +95,15 @@ public class DpapiCredentialStore : ICredentialStore
 
     public async Task DeleteAsync(int id, CancellationToken ct = default)
     {
-        var credential = await _dbContext.Credentials
+        await using var dbContext = await _dbContextFactory.CreateDbContextAsync(ct).ConfigureAwait(false);
+        var credential = await dbContext.Credentials
             .FindAsync(new object[] { id }, ct)
             .ConfigureAwait(false);
 
         if (credential != null)
         {
-            _dbContext.Credentials.Remove(credential);
-            await _dbContext.SaveChangesAsync(ct).ConfigureAwait(false);
+            dbContext.Credentials.Remove(credential);
+            await dbContext.SaveChangesAsync(ct).ConfigureAwait(false);
             _logger.Information("Deleted credential '{Label}' (Id={Id})", credential.Label, id);
         }
     }

@@ -90,6 +90,7 @@
                           ItemsSource="{Binding Credentials}"
                           SelectedItem="{Binding SelectedCredential, Mode=TwoWay}"
                           SelectionChanged="CredentialComboBox_SelectionChanged"
+                          AutomationProperties.Name="Deployment credentials"
                           ToolTip="Select credentials for remote device access"
                           Foreground="{StaticResource TextPrimaryBrush}"
                           MinWidth="160" Height="34" FontSize="12" Margin="0,0,24,0" />
@@ -102,6 +103,7 @@
                 </TextBlock>
                 <Slider Value="{Binding Concurrency}" Minimum="1" Maximum="50"
                         ToolTip="Number of devices to deploy to simultaneously"
+                        AutomationProperties.Name="Deployment concurrency"
                         TickFrequency="1" IsSnapToTickEnabled="True"
                         Width="100" VerticalAlignment="Center"
                         Foreground="{StaticResource HpBlueBrush}" />
@@ -121,6 +123,7 @@
                               ItemsSource="{Binding AvailableGroups}"
                               SelectedItem="{Binding SelectedGroup, Mode=TwoWay}"
                               SelectionChanged="GroupComboBox_SelectionChanged"
+                              AutomationProperties.Name="Device group"
                               ToolTip="Select a device group to scan and deploy"
                               Foreground="{StaticResource TextPrimaryBrush}"
                               MinWidth="200" Height="34" FontSize="12" Margin="0,0,16,0" />
@@ -239,7 +242,9 @@
                 </Expander.Header>
                 <ListBox ItemsSource="{Binding ScanLog}" MaxHeight="160"
                               VirtualizingStackPanel.IsVirtualizing="True"
-                              VirtualizingStackPanel.VirtualizationMode="Recycling"
+                               VirtualizingStackPanel.VirtualizationMode="Recycling"
+                               ScrollViewer.CanContentScroll="True"
+                               AutomationProperties.Name="Scan log"
                               ScrollViewer.HorizontalScrollBarVisibility="Disabled"
                               Background="Transparent" BorderThickness="0"
                               FontFamily="Consolas" FontSize="11" Margin="0,4,0,0">
@@ -388,20 +393,20 @@
 
                     <!-- Device ListView -->
                     <ListView ItemsSource="{Binding FilteredDevices}"
-                              SelectedItem="{Binding SelectedDevice}"
+                              SelectedItem="{Binding SelectedDevice, Mode=TwoWay}"
+                              PreviewMouseRightButtonDown="DeviceList_PreviewMouseRightButtonDown"
                               Background="Transparent" BorderThickness="0"
                               VirtualizingStackPanel.IsVirtualizing="True"
+                              VirtualizingStackPanel.VirtualizationMode="Recycling"
+                              ScrollViewer.CanContentScroll="True"
+                              AutomationProperties.Name="Devices available for deployment"
                               ScrollViewer.HorizontalScrollBarVisibility="Disabled">
                         <ListView.ContextMenu>
                             <ContextMenu>
-                                <MenuItem Header="Scan Device" Command="{Binding ScanDeviceCommand}" CommandParameter="{Binding SelectedDevice}">
-                                    <MenuItem.Icon>
-                                        <materialDesign:PackIcon Kind="Magnify" />
-                                    </MenuItem.Icon>
-                                </MenuItem>
-                                <Separator />
-                                <MenuItem Header="Copy Hostname" Command="{Binding CopyHostnameCommand}" />
-                                <MenuItem Header="Copy IP Address" Command="{Binding CopyIpAddressCommand}" />
+                                <MenuItem Header="Copy Hostname" Command="{Binding CopyHostnameCommand}"
+                                          CommandParameter="{Binding PlacementTarget.SelectedItem, RelativeSource={RelativeSource AncestorType=ContextMenu}}" />
+                                <MenuItem Header="Copy IP Address" Command="{Binding CopyIpAddressCommand}"
+                                          CommandParameter="{Binding PlacementTarget.SelectedItem, RelativeSource={RelativeSource AncestorType=ContextMenu}}" />
                             </ContextMenu>
                         </ListView.ContextMenu>
                         <ListView.ItemContainerStyle>
@@ -543,19 +548,22 @@
 
                         <!-- Updates list -->
                         <ListView Grid.Row="1" ItemsSource="{Binding SelectedDeviceRecommendations}"
+                                  PreviewMouseRightButtonDown="UpdateList_PreviewMouseRightButtonDown"
                                   Visibility="{Binding SelectedDeviceRecommendations.Count, Converter={StaticResource NonZeroToVis}}"
                                   Background="Transparent" BorderThickness="0"
                                   VirtualizingStackPanel.IsVirtualizing="True"
                                   VirtualizingStackPanel.VirtualizationMode="Recycling"
+                                  ScrollViewer.CanContentScroll="True"
+                                  AutomationProperties.Name="Updates available for selected device"
                                   ScrollViewer.HorizontalScrollBarVisibility="Disabled">
                             <ListView.ContextMenu>
                                 <ContextMenu>
                                     <MenuItem Header="Copy SoftPaq ID"
                                               Command="{Binding CopySoftPaqCommand}"
-                                              CommandParameter="{Binding SelectedDeviceRecommendations/SoftPaqId}" />
+                                              CommandParameter="{Binding PlacementTarget.SelectedItem.SoftPaqId, RelativeSource={RelativeSource AncestorType=ContextMenu}}" />
                                     <MenuItem Header="Copy Update Name"
                                               Command="{Binding CopyUpdateNameCommand}"
-                                              CommandParameter="{Binding SelectedDeviceRecommendations/Name}" />
+                                              CommandParameter="{Binding PlacementTarget.SelectedItem.Name, RelativeSource={RelativeSource AncestorType=ContextMenu}}" />
                                     <Separator />
                                     <MenuItem Header="Select All" Command="{Binding SelectAllDeviceUpdatesCommand}" />
                                     <MenuItem Header="Deselect All" Command="{Binding DeselectAllDeviceUpdatesCommand}" />
@@ -581,11 +589,13 @@
                                             </Grid.ColumnDefinitions>
 
                                             <!-- Checkbox -->
-                                            <CheckBox Grid.Column="0"
-                                                      IsChecked="{Binding Selected}"
-                                                      Foreground="{StaticResource HpBlueBrush}"
-                                                      ToolTip="Check to select this update for deployment"
-                                                      VerticalAlignment="Center" Margin="0,0,8,0" />
+                                             <CheckBox Grid.Column="0"
+                                                       IsChecked="{Binding Selected}"
+                                                       IsEnabled="{Binding SilentInstallable}"
+                                                       Foreground="{StaticResource HpBlueBrush}"
+                                                       ToolTip="Check to select this update for deployment"
+                                                       AutomationProperties.Name="Select update for remote deployment"
+                                                       VerticalAlignment="Center" Margin="0,0,8,0" />
 
                                             <!-- Update name + SoftPaq -->
                                             <StackPanel Grid.Column="1" VerticalAlignment="Center" Margin="0,0,8,0">

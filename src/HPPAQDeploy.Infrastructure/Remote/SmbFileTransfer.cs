@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Net;
+using System.Collections.Concurrent;
 using HPPAQDeploy.Core.Interfaces;
 using HPPAQDeploy.Shared.Configuration;
 using HPPAQDeploy.Shared.Helpers;
@@ -13,6 +14,36 @@ namespace HPPAQDeploy.Infrastructure.Remote;
 public class SmbFileTransfer : IFileTransfer
 {
     private readonly ILogger _logger = Log.ForContext<SmbFileTransfer>();
+    private static readonly ConcurrentDictionary<string, SemaphoreSlim> HostLocks = new(StringComparer.OrdinalIgnoreCase);
+
+    public async Task<IRemoteFileSession> OpenAuthenticatedSessionAsync(
+        string hostname,
+        NetworkCredential credential,
+        CancellationToken ct)
+    {
+        ValidateHostname(hostname);
+        ArgumentNullException.ThrowIfNull(credential);
+
+        var hostLock = HostLocks.GetOrAdd(hostname, _ => new SemaphoreSlim(1, 1));
+        await hostLock.WaitAsync(ct).ConfigureAwait(false);
+        var uncShare = $"\\\\{hostname}\\C$";
+
+        try
+        {
+            using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            timeoutCts.CancelAfter(TimeSpan.FromMinutes(AppSettings.FileTransferTimeoutMinutes));
+            await DisconnectSmbShareAsync(uncShare, timeoutCts.Token).ConfigureAwait(false);
+            await ConnectSmbShareAsync(uncShare, credential, timeoutCts.Token).ConfigureAwait(false);
+            timeoutCts.Token.ThrowIfCancellationRequested();
+            return new AuthenticatedRemoteFileSession(this, uncShare, hostLock);
+        }
+        catch
+        {
+            await DisconnectSmbShareForCleanupAsync(uncShare).ConfigureAwait(false);
+            hostLock.Release();
+            throw;
+        }
+    }
 
     public async Task CopyToRemoteAsync(
         string hostname,
@@ -21,11 +52,22 @@ public class SmbFileTransfer : IFileTransfer
         string remotePath,
         CancellationToken ct)
     {
-        await RetryHelper.RetryAsync(async () =>
+        ValidateHostname(hostname);
+        ArgumentNullException.ThrowIfNull(credential);
+        var hostLock = HostLocks.GetOrAdd(hostname, _ => new SemaphoreSlim(1, 1));
+        await hostLock.WaitAsync(ct).ConfigureAwait(false);
+        try
         {
-            await CopyToRemoteInternalAsync(hostname, credential, localPath, remotePath, ct)
-                .ConfigureAwait(false);
-        }, ct: ct).ConfigureAwait(false);
+            await RetryHelper.RetryAsync(async () =>
+            {
+                await CopyToRemoteInternalAsync(hostname, credential, localPath, remotePath, ct)
+                    .ConfigureAwait(false);
+            }, ct: ct).ConfigureAwait(false);
+        }
+        finally
+        {
+            hostLock.Release();
+        }
     }
 
     private async Task CopyToRemoteInternalAsync(
@@ -76,11 +118,32 @@ public class SmbFileTransfer : IFileTransfer
         }
         finally
         {
-            await DisconnectSmbShareAsync(uncShare, ct).ConfigureAwait(false);
+            await DisconnectSmbShareForCleanupAsync(uncShare).ConfigureAwait(false);
         }
     }
 
     public async Task CopyFromRemoteAsync(
+        string hostname,
+        NetworkCredential credential,
+        string remotePath,
+        string localPath,
+        CancellationToken ct)
+    {
+        ValidateHostname(hostname);
+        ArgumentNullException.ThrowIfNull(credential);
+        var hostLock = HostLocks.GetOrAdd(hostname, _ => new SemaphoreSlim(1, 1));
+        await hostLock.WaitAsync(ct).ConfigureAwait(false);
+        try
+        {
+            await CopyFromRemoteInternalAsync(hostname, credential, remotePath, localPath, ct).ConfigureAwait(false);
+        }
+        finally
+        {
+            hostLock.Release();
+        }
+    }
+
+    private async Task CopyFromRemoteInternalAsync(
         string hostname,
         NetworkCredential credential,
         string remotePath,
@@ -127,11 +190,31 @@ public class SmbFileTransfer : IFileTransfer
         }
         finally
         {
-            await DisconnectSmbShareAsync(uncShare, ct).ConfigureAwait(false);
+            await DisconnectSmbShareForCleanupAsync(uncShare).ConfigureAwait(false);
         }
     }
 
     public async Task DeleteRemoteDirectoryAsync(
+        string hostname,
+        NetworkCredential credential,
+        string remotePath,
+        CancellationToken ct)
+    {
+        ValidateHostname(hostname);
+        ArgumentNullException.ThrowIfNull(credential);
+        var hostLock = HostLocks.GetOrAdd(hostname, _ => new SemaphoreSlim(1, 1));
+        await hostLock.WaitAsync(ct).ConfigureAwait(false);
+        try
+        {
+            await DeleteRemoteDirectoryInternalAsync(hostname, credential, remotePath, ct).ConfigureAwait(false);
+        }
+        finally
+        {
+            hostLock.Release();
+        }
+    }
+
+    private async Task DeleteRemoteDirectoryInternalAsync(
         string hostname,
         NetworkCredential credential,
         string remotePath,
@@ -158,11 +241,30 @@ public class SmbFileTransfer : IFileTransfer
         }
         finally
         {
-            await DisconnectSmbShareAsync(uncShare, ct).ConfigureAwait(false);
+            await DisconnectSmbShareForCleanupAsync(uncShare).ConfigureAwait(false);
         }
     }
 
     public async Task<bool> TestConnectionAsync(
+        string hostname,
+        NetworkCredential credential,
+        CancellationToken ct)
+    {
+        ValidateHostname(hostname);
+        ArgumentNullException.ThrowIfNull(credential);
+        var hostLock = HostLocks.GetOrAdd(hostname, _ => new SemaphoreSlim(1, 1));
+        await hostLock.WaitAsync(ct).ConfigureAwait(false);
+        try
+        {
+            return await TestConnectionInternalAsync(hostname, credential, ct).ConfigureAwait(false);
+        }
+        finally
+        {
+            hostLock.Release();
+        }
+    }
+
+    private async Task<bool> TestConnectionInternalAsync(
         string hostname,
         NetworkCredential credential,
         CancellationToken ct)
@@ -179,8 +281,6 @@ public class SmbFileTransfer : IFileTransfer
 
             var exists = Directory.Exists(uncShare);
 
-            await DisconnectSmbShareAsync(uncShare, ct).ConfigureAwait(false);
-
             return exists;
         }
         catch (OperationCanceledException) when (!ct.IsCancellationRequested)
@@ -188,10 +288,18 @@ public class SmbFileTransfer : IFileTransfer
             _logger.Warning("SMB connection test to {Hostname} timed out", hostname);
             return false;
         }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
         catch (Exception ex)
         {
             _logger.Warning(ex, "SMB connection test to {Hostname} failed", hostname);
             return false;
+        }
+        finally
+        {
+            await DisconnectSmbShareForCleanupAsync(uncShare).ConfigureAwait(false);
         }
     }
 
@@ -201,19 +309,19 @@ public class SmbFileTransfer : IFileTransfer
             ? credential.UserName
             : $"{credential.Domain}\\{credential.UserName}";
 
-        var args = $"use \"{uncShare}\" /user:\"{username}\" \"{credential.Password}\"";
-
         _logger.Debug("Connecting to SMB share {UncShare}", uncShare);
-        await RunNetCommandAsync(args, ct).ConfigureAwait(false);
+        await RunNetCommandAsync(
+            ["use", uncShare, $"/user:{username}", credential.Password],
+            ct).ConfigureAwait(false);
     }
 
     private async Task DisconnectSmbShareAsync(string uncShare, CancellationToken ct)
     {
         try
         {
-            var args = $"use {uncShare} /delete /y";
             _logger.Debug("Disconnecting from SMB share {UncShare}", uncShare);
-            await RunNetCommandAsync(args, ct).ConfigureAwait(false);
+            await RunNetCommandAsync(["use", uncShare, "/delete", "/y"], ct)
+                .ConfigureAwait(false);
         }
         catch (Exception ex)
         {
@@ -222,17 +330,18 @@ public class SmbFileTransfer : IFileTransfer
         }
     }
 
-    private static async Task RunNetCommandAsync(string arguments, CancellationToken ct)
+    private static async Task RunNetCommandAsync(IReadOnlyList<string> arguments, CancellationToken ct)
     {
         var psi = new ProcessStartInfo
         {
             FileName = "net",
-            Arguments = arguments,
             UseShellExecute = false,
             CreateNoWindow = true,
             RedirectStandardOutput = true,
             RedirectStandardError = true
         };
+        foreach (var argument in arguments)
+            psi.ArgumentList.Add(argument);
 
         using var process = Process.Start(psi)
             ?? throw new InvalidOperationException("Failed to start net command process");
@@ -243,7 +352,15 @@ public class SmbFileTransfer : IFileTransfer
         var errorTask = process.StandardError.ReadToEndAsync(ct);
         var outputTask = process.StandardOutput.ReadToEndAsync(ct);
 
-        await process.WaitForExitAsync(ct).ConfigureAwait(false);
+        try
+        {
+            await process.WaitForExitAsync(ct).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException)
+        {
+            await StopProcessAsync(process).ConfigureAwait(false);
+            throw;
+        }
 
         if (process.ExitCode != 0)
         {
@@ -251,10 +368,10 @@ public class SmbFileTransfer : IFileTransfer
             var output = await outputTask.ConfigureAwait(false);
             var combined = $"{error} {output}".Trim();
             // System error 1219 means connection already exists - not a real error
-            if (!combined.Contains("1219"))
+            if (!combined.Contains("1219", StringComparison.Ordinal))
             {
                 throw new InvalidOperationException(
-                    $"net {arguments.Split(' ')[0]} failed with exit code {process.ExitCode}: {combined}");
+                    $"net {arguments[0]} failed with exit code {process.ExitCode}: {combined}");
             }
         }
     }
@@ -266,6 +383,10 @@ public class SmbFileTransfer : IFileTransfer
         {
             await CopyWithRobocopyAsync(sourceDir, targetDir, ct).ConfigureAwait(false);
             return;
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
         }
         catch (Exception ex)
         {
@@ -300,7 +421,15 @@ public class SmbFileTransfer : IFileTransfer
         // if nobody reads it, the process blocks on write and we deadlock on WaitForExit.
         var outputTask = process.StandardOutput.ReadToEndAsync(ct);
         var errorTask = process.StandardError.ReadToEndAsync(ct);
-        await process.WaitForExitAsync(ct).ConfigureAwait(false);
+        try
+        {
+            await process.WaitForExitAsync(ct).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException)
+        {
+            await StopProcessAsync(process).ConfigureAwait(false);
+            throw;
+        }
 
         // Robocopy exit codes: 0-7 = success, 8+ = failure
         if (process.ExitCode >= 8)
@@ -344,5 +473,89 @@ public class SmbFileTransfer : IFileTransfer
         }
 
         return $"\\\\{hostname}\\{remotePath}";
+    }
+
+    private static void ValidateHostname(string hostname)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(hostname);
+        if (hostname.Length > 255 ||
+            hostname is "." or ".." ||
+            hostname.Any(c => !char.IsAsciiLetterOrDigit(c) && c is not '-' and not '_' and not '.'))
+        {
+            throw new ArgumentException("Hostname contains invalid path characters.", nameof(hostname));
+        }
+    }
+
+    private static void TryKill(Process process)
+    {
+        try
+        {
+            if (!process.HasExited)
+                process.Kill(entireProcessTree: true);
+        }
+        catch (InvalidOperationException)
+        {
+            // Process exited between the state check and Kill.
+        }
+        catch (System.ComponentModel.Win32Exception)
+        {
+            // Best effort during cancellation.
+        }
+    }
+
+    private async Task DisconnectSmbShareForCleanupAsync(string uncShare)
+    {
+        // Cleanup must still run after the caller cancels. Keep it independently
+        // bounded so a broken SMB provider cannot delay cancellation indefinitely.
+        using var cleanupCts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        await DisconnectSmbShareAsync(uncShare, cleanupCts.Token).ConfigureAwait(false);
+    }
+
+    private static async Task StopProcessAsync(Process process)
+    {
+        TryKill(process);
+        try
+        {
+            await process.WaitForExitAsync(CancellationToken.None)
+                .WaitAsync(TimeSpan.FromSeconds(10))
+                .ConfigureAwait(false);
+        }
+        catch (TimeoutException)
+        {
+            // Do not turn cancellation into an unbounded wait.
+        }
+    }
+
+    private sealed class AuthenticatedRemoteFileSession : IRemoteFileSession
+    {
+        private readonly SmbFileTransfer _owner;
+        private readonly string _uncShare;
+        private readonly SemaphoreSlim _hostLock;
+        private int _disposed;
+
+        public AuthenticatedRemoteFileSession(
+            SmbFileTransfer owner,
+            string uncShare,
+            SemaphoreSlim hostLock)
+        {
+            _owner = owner;
+            _uncShare = uncShare;
+            _hostLock = hostLock;
+        }
+
+        public async ValueTask DisposeAsync()
+        {
+            if (Interlocked.Exchange(ref _disposed, 1) != 0)
+                return;
+
+            try
+            {
+                await _owner.DisconnectSmbShareForCleanupAsync(_uncShare).ConfigureAwait(false);
+            }
+            finally
+            {
+                _hostLock.Release();
+            }
+        }
     }
 }

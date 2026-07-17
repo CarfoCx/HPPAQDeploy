@@ -18,6 +18,7 @@ public partial class MainViewModel : ObservableObject
 {
     private readonly IServiceProvider _serviceProvider;
     private readonly ConcurrentQueue<SnackbarMessage> _snackbarQueue = new();
+    private readonly SemaphoreSlim _statusRefreshGate = new(1, 1);
     private volatile bool _isProcessingSnackbar;
 
     [ObservableProperty]
@@ -104,7 +105,8 @@ public partial class MainViewModel : ObservableObject
                 AsyncInitHelper.SafeFireAndForget(dashboard.RefreshCommand.ExecuteAsync(null), nameof(DashboardViewModel));
                 AsyncInitHelper.SafeFireAndForget(RefreshStatusBarAsync(), nameof(MainViewModel));
                 break;
-            case DevicesViewModel:
+            case DevicesViewModel devices:
+                AsyncInitHelper.SafeFireAndForget(devices.LoadDevicesCommand.ExecuteAsync(null), nameof(DevicesViewModel));
                 AsyncInitHelper.SafeFireAndForget(RefreshStatusBarAsync(), nameof(MainViewModel));
                 break;
             case GroupsViewModel groups:
@@ -112,10 +114,19 @@ public partial class MainViewModel : ObservableObject
                 AsyncInitHelper.SafeFireAndForget(groups.LoadAvailableDevicesCommand.ExecuteAsync(null), nameof(GroupsViewModel));
                 break;
             case DeployViewModel deploy:
-                AsyncInitHelper.SafeFireAndForget(deploy.RefreshGroupsAsync(), nameof(DeployViewModel));
+                AsyncInitHelper.SafeFireAndForget(deploy.LoadCommand.ExecuteAsync(null), nameof(DeployViewModel));
                 break;
             case HistoryViewModel history:
                 AsyncInitHelper.SafeFireAndForget(history.LoadHistoryCommand.ExecuteAsync(null), nameof(HistoryViewModel));
+                break;
+            case LogViewModel logs:
+                AsyncInitHelper.SafeFireAndForget(logs.RefreshCommand.ExecuteAsync(null), nameof(LogViewModel));
+                break;
+            case CredentialManagerViewModel credentials:
+                AsyncInitHelper.SafeFireAndForget(credentials.LoadCredentialsCommand.ExecuteAsync(null), nameof(CredentialManagerViewModel));
+                break;
+            case SettingsViewModel settings:
+                AsyncInitHelper.SafeFireAndForget(settings.RefreshStatusAsync(), nameof(SettingsViewModel));
                 break;
         }
 
@@ -180,6 +191,9 @@ public partial class MainViewModel : ObservableObject
 
     public async Task RefreshStatusBarAsync()
     {
+        if (!await _statusRefreshGate.WaitAsync(0))
+            return;
+
         try
         {
             using var scope = _serviceProvider.CreateScope();
@@ -193,6 +207,10 @@ public partial class MainViewModel : ObservableObject
         catch (Exception ex)
         {
             Log.Warning(ex, "Failed to refresh status bar counts");
+        }
+        finally
+        {
+            _statusRefreshGate.Release();
         }
     }
 

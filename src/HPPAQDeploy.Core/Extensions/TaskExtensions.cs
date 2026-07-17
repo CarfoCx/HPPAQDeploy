@@ -3,33 +3,39 @@ namespace HPPAQDeploy.Core.Extensions;
 public static class TaskExtensions
 {
     public static async Task ParallelForEachAsync<T>(
-        IEnumerable<T> source,
+        this IEnumerable<T> source,
         int maxConcurrency,
         Func<T, CancellationToken, Task> action,
         IProgress<(int completed, int total)>? progress,
         CancellationToken ct)
     {
+        ArgumentNullException.ThrowIfNull(source);
+        ArgumentNullException.ThrowIfNull(action);
+        if (maxConcurrency <= 0)
+            throw new ArgumentOutOfRangeException(nameof(maxConcurrency));
+
         var items = source as IReadOnlyList<T> ?? source.ToList();
         int total = items.Count;
         int completed = 0;
 
-        using var semaphore = new SemaphoreSlim(maxConcurrency, maxConcurrency);
-
-        var tasks = items.Select(async item =>
-        {
-            await semaphore.WaitAsync(ct).ConfigureAwait(false);
-            try
+        await Parallel.ForEachAsync(
+            items,
+            new ParallelOptions
             {
-                await action(item, ct).ConfigureAwait(false);
-            }
-            finally
+                MaxDegreeOfParallelism = maxConcurrency,
+                CancellationToken = ct
+            },
+            async (item, token) =>
             {
-                semaphore.Release();
-                int current = Interlocked.Increment(ref completed);
-                progress?.Report((current, total));
-            }
-        });
-
-        await Task.WhenAll(tasks).ConfigureAwait(false);
+                try
+                {
+                    await action(item, token).ConfigureAwait(false);
+                }
+                finally
+                {
+                    int current = Interlocked.Increment(ref completed);
+                    progress?.Report((current, total));
+                }
+            }).ConfigureAwait(false);
     }
 }

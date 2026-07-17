@@ -15,13 +15,26 @@ public class CircuitBreaker
     public TimeSpan TrackingWindow { get; }
 
     private readonly ConcurrentDictionary<string, HostCircuit> _circuits = new(StringComparer.OrdinalIgnoreCase);
-    private readonly object _lock = new();
+    private readonly TimeProvider _timeProvider;
 
-    public CircuitBreaker(int failureThreshold = 3, TimeSpan? openDuration = null, TimeSpan? trackingWindow = null)
+    public CircuitBreaker(
+        int failureThreshold = 3,
+        TimeSpan? openDuration = null,
+        TimeSpan? trackingWindow = null,
+        TimeProvider? timeProvider = null)
     {
+        if (failureThreshold <= 0)
+            throw new ArgumentOutOfRangeException(nameof(failureThreshold));
+
         FailureThreshold = failureThreshold;
         OpenDuration = openDuration ?? TimeSpan.FromMinutes(2);
         TrackingWindow = trackingWindow ?? TimeSpan.FromMinutes(5);
+        if (OpenDuration < TimeSpan.Zero)
+            throw new ArgumentOutOfRangeException(nameof(openDuration));
+        if (TrackingWindow <= TimeSpan.Zero)
+            throw new ArgumentOutOfRangeException(nameof(trackingWindow));
+
+        _timeProvider = timeProvider ?? TimeProvider.System;
     }
 
     /// <summary>
@@ -29,16 +42,32 @@ public class CircuitBreaker
     /// </summary>
     public bool IsOpen(string hostname)
     {
+        ArgumentException.ThrowIfNullOrWhiteSpace(hostname);
         if (!_circuits.TryGetValue(hostname, out var circuit))
             return false;
 
-        lock (_lock)
+        lock (circuit.Gate)
         {
-            if (circuit.State == CircuitState.Open && DateTime.UtcNow >= circuit.OpenUntil)
+            var now = _timeProvider.GetUtcNow();
+            if (circuit.State == CircuitState.Open && now >= circuit.OpenUntil)
             {
                 // Transition to half-open: allow one probe
                 circuit.State = CircuitState.HalfOpen;
+                circuit.ProbeLeaseUntil = now + OpenDuration;
                 return false;
+            }
+
+            if (circuit.State == CircuitState.HalfOpen)
+            {
+                // If a caller disappeared without recording an outcome, eventually
+                // release the probe lease rather than blocking this host forever.
+                if (now >= circuit.ProbeLeaseUntil)
+                {
+                    circuit.ProbeLeaseUntil = now + OpenDuration;
+                    return false;
+                }
+
+                return true;
             }
 
             return circuit.State == CircuitState.Open;
@@ -50,11 +79,11 @@ public class CircuitBreaker
     /// </summary>
     public void RecordSuccess(string hostname)
     {
+        ArgumentException.ThrowIfNullOrWhiteSpace(hostname);
         if (_circuits.TryGetValue(hostname, out var circuit))
         {
-            lock (_lock)
+            lock (circuit.Gate)
             {
-                circuit._consecutiveFailures = 0;
                 circuit.State = CircuitState.Closed;
                 circuit.Failures.Clear();
             }
@@ -66,23 +95,28 @@ public class CircuitBreaker
     /// </summary>
     public void RecordFailure(string hostname)
     {
+        ArgumentException.ThrowIfNullOrWhiteSpace(hostname);
         var circuit = _circuits.GetOrAdd(hostname, _ => new HostCircuit());
 
-        lock (_lock)
+        lock (circuit.Gate)
         {
-            // Trim old failures outside the tracking window
-            var cutoff = DateTime.UtcNow - TrackingWindow;
-            while (circuit.Failures.TryPeek(out var oldest) && oldest < cutoff)
-                circuit.Failures.TryDequeue(out _);
+            var now = _timeProvider.GetUtcNow();
 
-            circuit.Failures.Enqueue(DateTime.UtcNow);
-            var failures = Interlocked.Increment(ref circuit._consecutiveFailures);
-
-            if (failures >= FailureThreshold)
+            if (circuit.State == CircuitState.HalfOpen)
             {
-                circuit.State = CircuitState.Open;
-                circuit.OpenUntil = DateTime.UtcNow + OpenDuration;
+                Open(circuit, now);
+                return;
             }
+
+            // Trim old failures outside the tracking window
+            var cutoff = now - TrackingWindow;
+            while (circuit.Failures.Count > 0 && circuit.Failures.Peek() < cutoff)
+                circuit.Failures.Dequeue();
+
+            circuit.Failures.Enqueue(now);
+
+            if (circuit.Failures.Count >= FailureThreshold)
+                Open(circuit, now);
         }
     }
 
@@ -91,6 +125,7 @@ public class CircuitBreaker
     /// </summary>
     public void Reset(string hostname)
     {
+        ArgumentException.ThrowIfNullOrWhiteSpace(hostname);
         _circuits.TryRemove(hostname, out _);
     }
 
@@ -104,10 +139,17 @@ public class CircuitBreaker
 
     private class HostCircuit
     {
+        public readonly object Gate = new();
         public CircuitState State = CircuitState.Closed;
-        public int _consecutiveFailures;
-        public DateTime OpenUntil;
-        public readonly ConcurrentQueue<DateTime> Failures = new();
+        public DateTimeOffset OpenUntil;
+        public DateTimeOffset ProbeLeaseUntil;
+        public readonly Queue<DateTimeOffset> Failures = new();
+    }
+
+    private void Open(HostCircuit circuit, DateTimeOffset now)
+    {
+        circuit.State = CircuitState.Open;
+        circuit.OpenUntil = now + OpenDuration;
     }
 
     private enum CircuitState

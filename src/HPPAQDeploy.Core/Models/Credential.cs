@@ -1,3 +1,5 @@
+using System.Runtime.CompilerServices;
+
 namespace HPPAQDeploy.Core.Models;
 
 public class Credential
@@ -18,9 +20,10 @@ public class Credential
 
     public override bool Equals(object? obj)
     {
+        if (ReferenceEquals(this, obj)) return true;
         if (obj is not Credential other) return false;
-        return Id == other.Id;
+        return Id != 0 && Id == other.Id;
     }
 
-    public override int GetHashCode() => Id.GetHashCode();
+    public override int GetHashCode() => Id != 0 ? Id.GetHashCode() : RuntimeHelpers.GetHashCode(this);
 }

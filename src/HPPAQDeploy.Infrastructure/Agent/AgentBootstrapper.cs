@@ -12,10 +12,13 @@ public sealed class AgentBootstrapper : IAgentBootstrapper
     private const string RemoteRoot = @"C:\ProgramData\HPPAQDeploy";
     private const string RemoteAgentPath = RemoteRoot + @"\Agent";
     private const string RemoteHpiaPath = RemoteRoot + @"\HPIA";
+    private const string RemoteRepositoryPath = RemoteRoot + @"\Repository";
     private const string AgentTaskName = "HPPAQDeployAgent";
 
     // Track which hosts have been bootstrapped this session to skip redundant copies
     private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, DateTime> _bootstrappedHosts
+        = new(StringComparer.OrdinalIgnoreCase);
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, string> _stagedRepositoryVersions
         = new(StringComparer.OrdinalIgnoreCase);
 
     // Per-host locking to prevent concurrent bootstrapping to the same host
@@ -37,6 +40,8 @@ public sealed class AgentBootstrapper : IAgentBootstrapper
         _fileTransfer = fileTransfer;
         _remoteExecutor = remoteExecutor;
     }
+
+    public string RemoteOfflineRepositoryPath => RemoteRepositoryPath;
 
     public async Task BootstrapAsync(string hostname, NetworkCredential credential, CancellationToken ct)
     {
@@ -71,6 +76,11 @@ public sealed class AgentBootstrapper : IAgentBootstrapper
     {
         var localAgentPath = ResolveLocalAgentPath();
         var localHpiaPath = AppSettings.HpiaExtractPath;
+        var stageOfflineRepository = AppSettings.UseOfflineRepository;
+        var repositorySharePath = AppSettings.RepositorySharePath?.Trim() ?? string.Empty;
+        var stageLocalRepository = stageOfflineRepository &&
+                                   string.IsNullOrWhiteSpace(repositorySharePath);
+        var localRepositoryPath = AppSettings.RepositoryPath;
 
         if (!Directory.Exists(localAgentPath))
             throw new DirectoryNotFoundException($"Agent build output not found at {localAgentPath}.");
@@ -78,27 +88,34 @@ public sealed class AgentBootstrapper : IAgentBootstrapper
         if (!File.Exists(Path.Combine(localHpiaPath, "HPImageAssistant.exe")))
             throw new FileNotFoundException($"HPIA is not extracted at {localHpiaPath}. Extract HPIA before bootstrapping agents.");
 
+        if (stageLocalRepository &&
+            (!Directory.Exists(localRepositoryPath) || !Directory.EnumerateFileSystemEntries(localRepositoryPath).Any()))
+        {
+            throw new DirectoryNotFoundException(
+                $"Offline repository is enabled, but the local repository is missing or empty at {localRepositoryPath}. Sync it in Settings before scanning.");
+        }
+
+        var repositoryVersion = stageLocalRepository
+            ? GetRepositoryVersion(localRepositoryPath)
+            : stageOfflineRepository
+                ? $"share:{repositorySharePath}"
+                : string.Empty;
+
         // Skip if already bootstrapped this session and recently (within 30 minutes)
         if (_bootstrappedHosts.TryGetValue(hostname, out var lastBootstrap) &&
             (DateTime.UtcNow - lastBootstrap).TotalMinutes < 30)
         {
-            // Verify agent is still present via quick UNC check
-            var uncAgentExe = RemotePathHelper.ToUncPath(hostname, RemoteAgentPath + @"\HPPAQDeploy.Agent.exe");
-            var uncHpiaExe = RemotePathHelper.ToUncPath(hostname, RemoteHpiaPath + @"\HPImageAssistant.exe");
-            try
+            var repositoryCurrent = !stageOfflineRepository ||
+                (_stagedRepositoryVersions.TryGetValue(hostname, out var stagedVersion) &&
+                 string.Equals(stagedVersion, repositoryVersion, StringComparison.Ordinal));
+            if (repositoryCurrent)
             {
-                if (File.Exists(uncAgentExe) && File.Exists(uncHpiaExe))
-                {
-                    _logger.Information("Agent already bootstrapped on {Hostname} ({Elapsed:F0}m ago), skipping",
-                        hostname, (DateTime.UtcNow - lastBootstrap).TotalMinutes);
-                    return;
-                }
-                _logger.Information("Agent files missing on {Hostname} despite recent bootstrap, re-bootstrapping", hostname);
+                _logger.Information("Agent already bootstrapped on {Hostname} ({Elapsed:F0}m ago), skipping",
+                    hostname, (DateTime.UtcNow - lastBootstrap).TotalMinutes);
+                return;
             }
-            catch (Exception ex)
-            {
-                _logger.Debug(ex, "UNC pre-check failed for {Hostname}, proceeding with bootstrap", hostname);
-            }
+
+            _logger.Information("Offline repository changed for {Hostname}; refreshing bootstrap content", hostname);
         }
 
         _logger.Information("Bootstrapping HPPAQDeploy agent on {Hostname}", hostname);
@@ -106,10 +123,16 @@ public sealed class AgentBootstrapper : IAgentBootstrapper
         // Create required directories via UNC (much faster than remote WMI command execution)
         try
         {
+            await using var remoteSession = await _fileTransfer
+                .OpenAuthenticatedSessionAsync(hostname, credential, ct);
             var uncRoot = RemotePathHelper.ToUncPath(hostname, RemoteRoot);
             Directory.CreateDirectory(Path.Combine(uncRoot, "jobs"));
             Directory.CreateDirectory(Path.Combine(uncRoot, "results"));
             Directory.CreateDirectory(Path.Combine(uncRoot, "logs"));
+
+            // Clean abandoned temp files and old results. Queued/running jobs belong
+            // to the agent claim lifecycle and must never be deleted by bootstrap.
+            CleanStaleJobFiles(hostname);
         }
         catch (Exception ex)
         {
@@ -123,18 +146,41 @@ public sealed class AgentBootstrapper : IAgentBootstrapper
                 ct);
         }
 
-        // Clean stale job/result files that may interfere with new scans
-        CleanStaleJobFiles(hostname);
-
         // Smart copy: only copy files that are missing or outdated
         await SmartCopyAsync(hostname, credential, localAgentPath, RemoteAgentPath, ct);
         await SmartCopyAsync(hostname, credential, localHpiaPath, RemoteHpiaPath, ct);
+        if (stageLocalRepository)
+        {
+            _logger.Information("Staging offline repository to {Hostname}:{RemotePath}", hostname, RemoteRepositoryPath);
+            await _fileTransfer.CopyToRemoteAsync(
+                hostname,
+                credential,
+                localRepositoryPath,
+                RemoteRepositoryPath,
+                ct);
+            _stagedRepositoryVersions[hostname] = repositoryVersion;
+        }
+        else if (stageOfflineRepository)
+        {
+            await StageRepositoryShareAsync(hostname, credential, repositorySharePath, ct);
+            _stagedRepositoryVersions[hostname] = repositoryVersion;
+        }
 
         // Create the scheduled task (lightweight: schtasks command via UNC batch)
         await EnsureScheduledTaskAsync(hostname, credential, ct);
 
         _bootstrappedHosts[hostname] = DateTime.UtcNow;
         _logger.Information("HPPAQDeploy agent bootstrap completed on {Hostname}", hostname);
+    }
+
+    private static string GetRepositoryVersion(string repositoryPath)
+    {
+        var metadataPath = Path.Combine(repositoryPath, ".repository", "repository.json");
+        FileSystemInfo versionSource = File.Exists(metadataPath)
+            ? new FileInfo(metadataPath)
+            : new DirectoryInfo(repositoryPath);
+
+        return $"{versionSource.LastWriteTimeUtc.Ticks}:{(versionSource as FileInfo)?.Length ?? 0}";
     }
 
     /// <summary>
@@ -147,8 +193,8 @@ public sealed class AgentBootstrapper : IAgentBootstrapper
             var uncJobsPath = RemotePathHelper.ToUncPath(hostname, RemoteRoot + @"\jobs");
             var uncResultsPath = RemotePathHelper.ToUncPath(hostname, RemoteRoot + @"\results");
 
-            CleanOldFiles(uncJobsPath, TimeSpan.FromHours(1));
-            CleanOldFiles(uncResultsPath, TimeSpan.FromHours(1));
+            CleanOldFiles(uncJobsPath, TimeSpan.FromHours(1), ".tmp");
+            CleanOldFiles(uncResultsPath, TimeSpan.FromHours(24), ".json");
         }
         catch (Exception ex)
         {
@@ -156,7 +202,7 @@ public sealed class AgentBootstrapper : IAgentBootstrapper
         }
     }
 
-    private static void CleanOldFiles(string directory, TimeSpan maxAge)
+    private static void CleanOldFiles(string directory, TimeSpan maxAge, string extension)
     {
         if (!Directory.Exists(directory)) return;
 
@@ -165,7 +211,8 @@ public sealed class AgentBootstrapper : IAgentBootstrapper
         {
             try
             {
-                if (File.GetLastWriteTimeUtc(file) < cutoff)
+                if (file.EndsWith(extension, StringComparison.OrdinalIgnoreCase) &&
+                    File.GetLastWriteTimeUtc(file) < cutoff)
                     File.Delete(file);
             }
             catch { /* best-effort cleanup */ }
@@ -173,8 +220,9 @@ public sealed class AgentBootstrapper : IAgentBootstrapper
     }
 
     /// <summary>
-    /// Smart copy that only transfers files that are missing or have different sizes.
-    /// Much faster than blindly copying everything every time.
+    /// Mirrors bootstrap content through the authenticated, cancellable SMB layer.
+    /// Robocopy skips unchanged files, so a separate synchronous UNC probe would add
+    /// latency and can hang when the endpoint is unavailable.
     /// </summary>
     private async Task SmartCopyAsync(
         string hostname,
@@ -183,49 +231,42 @@ public sealed class AgentBootstrapper : IAgentBootstrapper
         string remotePath,
         CancellationToken ct)
     {
-        var uncRemotePath = RemotePathHelper.ToUncPath(hostname, remotePath);
+        await _fileTransfer.CopyToRemoteAsync(hostname, credential, localPath, remotePath, ct);
+    }
 
-        // Check if key files already exist and match
-        bool needsCopy = true;
-        try
+    private async Task StageRepositoryShareAsync(
+        string hostname,
+        NetworkCredential credential,
+        string repositorySharePath,
+        CancellationToken ct)
+    {
+        if (!repositorySharePath.StartsWith(@"\\", StringComparison.Ordinal) ||
+            repositorySharePath.IndexOfAny(['"', '\r', '\n', '%']) >= 0)
         {
-            if (Directory.Exists(uncRemotePath))
-            {
-                var localFiles = Directory.GetFiles(localPath, "*", SearchOption.AllDirectories);
-                var missingOrDifferent = 0;
-                var checkedCount = 0;
-                
-                // Check a sample of files (exe/dll) for existence and size match
-                foreach (var localFile in localFiles.Where(f =>
-                    f.EndsWith(".exe", StringComparison.OrdinalIgnoreCase) ||
-                    f.EndsWith(".dll", StringComparison.OrdinalIgnoreCase) ||
-                    f.EndsWith(".json", StringComparison.OrdinalIgnoreCase)))
-                {
-                    ct.ThrowIfCancellationRequested();
-                    var relativePath = Path.GetRelativePath(localPath, localFile);
-                    var remoteFile = Path.Combine(uncRemotePath, relativePath);
-
-                    if (!File.Exists(remoteFile) || new FileInfo(remoteFile).Length != new FileInfo(localFile).Length)
-                    {
-                        missingOrDifferent++;
-                        if (missingOrDifferent > 3) break; // Too many differences, just recopy everything
-                    }
-                    checkedCount++;
-                }
-
-                needsCopy = missingOrDifferent > 0 || checkedCount == 0;
-                if (!needsCopy)
-                    _logger.Information("Files on {Hostname} at {Path} are up-to-date, skipping copy", hostname, remotePath);
-            }
-        }
-        catch (Exception ex)
-        {
-            _logger.Debug(ex, "Smart copy pre-check failed for {Hostname}, will do full copy", hostname);
+            throw new InvalidOperationException(
+                "The repository share must be a valid UNC path and cannot contain quotes, percent signs, or line breaks.");
         }
 
-        if (needsCopy)
+        var sourcePath = repositorySharePath.TrimEnd('\\');
+        _logger.Information(
+            "Mirroring repository share {RepositoryShare} to {Hostname}:{RemotePath}",
+            sourcePath,
+            hostname,
+            RemoteRepositoryPath);
+
+        var result = await _remoteExecutor.ExecuteAsync(
+            hostname,
+            credential,
+            $"robocopy \"{sourcePath}\" \"{RemoteRepositoryPath}\" /MIR /MT:8 /R:1 /W:2 /NP /NFL /NDL",
+            null,
+            TimeSpan.FromMinutes(AppSettings.FileTransferTimeoutMinutes),
+            ct);
+
+        // Robocopy uses 0-7 for successful outcomes and 8+ for failures.
+        if (result.ExitCode is < 0 or >= 8)
         {
-            await _fileTransfer.CopyToRemoteAsync(hostname, credential, localPath, remotePath, ct);
+            throw new InvalidOperationException(
+                $"Repository staging failed on {hostname} with robocopy exit code {result.ExitCode}. {result.ErrorOutput}".Trim());
         }
     }
 
@@ -244,7 +285,11 @@ public sealed class AgentBootstrapper : IAgentBootstrapper
                 $"schtasks /Create /TN \"{AgentTaskName}\" /TR \"{RemoteAgentPath}\\HPPAQDeploy.Agent.exe run-once\" /SC ONSTART /RU SYSTEM /RL HIGHEST /F\r\n";
 
             var uncBatchPath = RemotePathHelper.ToUncPath(hostname, RemoteRoot + @"\setup_task.bat");
-            await File.WriteAllTextAsync(uncBatchPath, batchContent, ct);
+            await using (var remoteSession = await _fileTransfer
+                .OpenAuthenticatedSessionAsync(hostname, credential, ct))
+            {
+                await File.WriteAllTextAsync(uncBatchPath, batchContent, ct);
+            }
 
             // Execute the batch via WMI
             await _remoteExecutor.ExecuteAsync(
@@ -256,7 +301,13 @@ public sealed class AgentBootstrapper : IAgentBootstrapper
                 ct);
 
             // Clean up the batch file
-            try { File.Delete(uncBatchPath); } catch { }
+            try
+            {
+                await using var remoteSession = await _fileTransfer
+                    .OpenAuthenticatedSessionAsync(hostname, credential, ct);
+                File.Delete(uncBatchPath);
+            }
+            catch { }
         }
         catch (Exception ex)
         {

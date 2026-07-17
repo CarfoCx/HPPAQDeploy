@@ -9,11 +9,13 @@ namespace HPPAQDeploy.App;
 
 public partial class MainWindow : Window
 {
+    private readonly DeployViewModel _deployViewModel;
     private static readonly string WindowStateFile = Path.Combine(
         AppDomain.CurrentDomain.BaseDirectory, "Data", "windowstate.json");
 
-    public MainWindow()
+    public MainWindow(DeployViewModel deployViewModel)
     {
+        _deployViewModel = deployViewModel;
         InitializeComponent();
         Closing += OnClosing;
         Loaded += OnLoaded;
@@ -26,7 +28,7 @@ public partial class MainWindow : Window
 
     private void OnClosing(object? sender, CancelEventArgs e)
     {
-        if (DataContext is MainViewModel mainVm && mainVm.CurrentView is DeployViewModel deployVm && deployVm.IsDeploying)
+        if (_deployViewModel.HasActiveDeployments)
         {
             var result = MessageBox.Show(
                 "A deployment is currently in progress.\n\nClosing the application may leave devices in an inconsistent state.\n\nAre you sure you want to exit?",
@@ -71,19 +73,26 @@ public partial class MainWindow : Window
             var state = JsonSerializer.Deserialize<WindowStateData>(File.ReadAllText(WindowStateFile));
             if (state is null) return;
 
-            // Validate the position is within screen bounds
-            var screenWidth = SystemParameters.VirtualScreenWidth;
-            var screenHeight = SystemParameters.VirtualScreenHeight;
-            if (state.Left >= 0 && state.Top >= 0 &&
-                state.Left + state.Width <= screenWidth + 50 &&
-                state.Top + state.Height <= screenHeight + 50)
-            {
-                Left = state.Left;
-                Top = state.Top;
-                Width = state.Width;
-                Height = state.Height;
-                WindowStartupLocation = WindowStartupLocation.Manual;
-            }
+            if (!double.IsFinite(state.Left) || !double.IsFinite(state.Top) ||
+                !double.IsFinite(state.Width) || !double.IsFinite(state.Height) ||
+                state.Width <= 0 || state.Height <= 0)
+                return;
+
+            var virtualLeft = SystemParameters.VirtualScreenLeft;
+            var virtualTop = SystemParameters.VirtualScreenTop;
+            var virtualWidth = SystemParameters.VirtualScreenWidth;
+            var virtualHeight = SystemParameters.VirtualScreenHeight;
+
+            var width = Math.Clamp(state.Width, MinWidth, Math.Max(MinWidth, virtualWidth));
+            var height = Math.Clamp(state.Height, MinHeight, Math.Max(MinHeight, virtualHeight));
+            var maxLeft = virtualLeft + Math.Max(0, virtualWidth - width);
+            var maxTop = virtualTop + Math.Max(0, virtualHeight - height);
+
+            Width = width;
+            Height = height;
+            Left = Math.Clamp(state.Left, virtualLeft, maxLeft);
+            Top = Math.Clamp(state.Top, virtualTop, maxTop);
+            WindowStartupLocation = WindowStartupLocation.Manual;
 
             if (state.IsMaximized)
                 WindowState = WindowState.Maximized;

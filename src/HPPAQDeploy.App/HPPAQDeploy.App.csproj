@@ -55,4 +55,16 @@
     <Resource Include="Resources\app_icon.ico" />
     <Resource Include="Resources\app_icon.png" />
   </ItemGroup>
+
+  <!-- The manager deploys this self-contained agent to remote endpoints. Keep it
+       beside every published manager so deployments also work outside the repo. -->
+  <Target Name="PublishEndpointAgent" AfterTargets="Publish">
+    <PropertyGroup>
+      <_AgentPublishDir>$([System.IO.Path]::GetFullPath('$(PublishDir)Agent\'))</_AgentPublishDir>
+    </PropertyGroup>
+    <MSBuild Projects="..\HPPAQDeploy.Agent\HPPAQDeploy.Agent.csproj"
+             Targets="Publish"
+             BuildInParallel="false"
+             Properties="Configuration=$(Configuration);RuntimeIdentifier=win-x64;SelfContained=true;PublishSingleFile=true;PublishTrimmed=false;PublishDir=$(_AgentPublishDir)" />
+  </Target>
 </Project>

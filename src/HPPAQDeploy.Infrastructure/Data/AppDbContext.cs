@@ -1,5 +1,6 @@
 using HPPAQDeploy.Core.Models;
 using HPPAQDeploy.Shared.Configuration;
+using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
 
 namespace HPPAQDeploy.Infrastructure.Data;
@@ -35,7 +36,14 @@ public class AppDbContext : DbContext
             if (!Directory.Exists(dbDirectory))
                 Directory.CreateDirectory(dbDirectory);
 
-            optionsBuilder.UseSqlite($"Data Source={dbPath}");
+            var connectionString = new SqliteConnectionStringBuilder
+            {
+                DataSource = dbPath,
+                Mode = SqliteOpenMode.ReadWriteCreate,
+                Pooling = true,
+                DefaultTimeout = 30
+            }.ToString();
+            optionsBuilder.UseSqlite(connectionString);
         }
     }
 
@@ -137,6 +145,7 @@ public class AppDbContext : DbContext
     public void Initialize()
     {
         Database.EnsureCreated();
+        Database.ExecuteSqlRaw("PRAGMA journal_mode=WAL;");
         ApplyColumnMigrations();
     }
 
@@ -147,7 +156,9 @@ public class AppDbContext : DbContext
     private void ApplyColumnMigrations()
     {
         var conn = Database.GetDbConnection();
-        conn.Open();
+        var shouldClose = conn.State != System.Data.ConnectionState.Open;
+        if (shouldClose)
+            conn.Open();
         try
         {
             // Collect existing column names for the Devices table
@@ -244,7 +255,8 @@ public class AppDbContext : DbContext
         }
         finally
         {
-            conn.Close();
+            if (shouldClose)
+                conn.Close();
         }
     }
 }

@@ -66,7 +66,8 @@
                             Margin="0,0,6,0" ToolTip="Clear selected devices" />
                     <Button Command="{Binding ClearFilterCommand}"
                             Background="Transparent" BorderThickness="0" Padding="4,0"
-                            ToolTip="Clear filter">
+                            ToolTip="Clear filter"
+                            AutomationProperties.Name="Clear device filter">
                         <materialDesign:PackIcon Kind="Close" Width="14" Height="14"
                                                  Foreground="{StaticResource TextSecondaryBrush}" />
                     </Button>
@@ -130,24 +131,29 @@
             <Border Grid.Column="0" Style="{StaticResource AppCard}"
                     Visibility="{Binding HasDevices, Converter={StaticResource BoolToVis}}">
                 <DataGrid ItemsSource="{Binding FilteredDevices}"
-                          SelectedItem="{Binding SelectedDevice}"
+                          SelectedItem="{Binding SelectedDevice, Mode=TwoWay}"
+                          PreviewMouseRightButtonDown="DevicesGrid_PreviewMouseRightButtonDown"
                           AutoGenerateColumns="False" IsReadOnly="True"
                           Style="{StaticResource ProfessionalDataGrid}"
                           VirtualizingStackPanel.IsVirtualizing="True"
                           VirtualizingStackPanel.VirtualizationMode="Recycling"
                           EnableRowVirtualization="True"
                           EnableColumnVirtualization="True"
+                          ScrollViewer.CanContentScroll="True"
+                          AutomationProperties.Name="Devices"
                           CanUserResizeColumns="False"
                           CanUserReorderColumns="False"
                           CanUserSortColumns="True"
                           SelectionMode="Extended">
                     <DataGrid.ContextMenu>
                         <ContextMenu>
-                            <MenuItem Header="Copy Hostname" Command="{Binding CopyHostnameCommand}" />
-                            <MenuItem Header="Copy IP Address" Command="{Binding CopyIpAddressCommand}" />
+                            <MenuItem Header="Copy Hostname" Command="{Binding CopyHostnameCommand}"
+                                      CommandParameter="{Binding PlacementTarget.SelectedItem, RelativeSource={RelativeSource AncestorType=ContextMenu}}" />
+                            <MenuItem Header="Copy IP Address" Command="{Binding CopyIpAddressCommand}"
+                                      CommandParameter="{Binding PlacementTarget.SelectedItem, RelativeSource={RelativeSource AncestorType=ContextMenu}}" />
                             <Separator />
                             <MenuItem Header="Delete Device" Command="{Binding DeleteDeviceCommand}"
-                                      CommandParameter="{Binding SelectedDevice}" />
+                                      CommandParameter="{Binding PlacementTarget.SelectedItem, RelativeSource={RelativeSource AncestorType=ContextMenu}}" />
                         </ContextMenu>
                     </DataGrid.ContextMenu>
                     <DataGrid.Columns>
@@ -234,6 +240,7 @@
                                             CommandParameter="{Binding}"
                                             Width="30" Height="30" Padding="0" MinWidth="0"
                                             ToolTip="Delete this device"
+                                            AutomationProperties.Name="Delete device"
                                             Cursor="Hand"
                                             Background="Transparent" BorderThickness="0">
                                         <Button.Template>
@@ -262,7 +269,12 @@
 
             <!-- Splitter -->
             <GridSplitter Grid.Column="1" Width="6" HorizontalAlignment="Center"
-                          VerticalAlignment="Stretch" Background="Transparent"
+                          VerticalAlignment="Stretch" Background="{StaticResource DividerBrush}"
+                          Opacity="0.55" Cursor="SizeWE" ShowsPreview="True"
+                          ResizeBehavior="PreviousAndNext" KeyboardIncrement="10"
+                          FocusVisualStyle="{StaticResource AppFocusVisual}"
+                          ToolTip="Resize device details"
+                          AutomationProperties.Name="Resize device details"
                           Visibility="{Binding HasSelectedDevice, Converter={StaticResource BoolToVis}}" />
 
             <!-- Detail Panel -->
@@ -389,6 +401,7 @@
                                   ItemsSource="{Binding Credentials}"
                                   SelectedItem="{Binding SelectedCredential, Mode=TwoWay}"
                                   SelectionChanged="CredentialComboBox_SelectionChanged"
+                                  AutomationProperties.Name="Credentials for host discovery"
                                   Foreground="{StaticResource TextPrimaryBrush}"
                                   MinWidth="150" Height="28" FontSize="12" />
                     </StackPanel>
@@ -415,6 +428,7 @@
                                      BorderThickness="1" Padding="8,0"
                                      Height="30" FontSize="12"
                                      VerticalContentAlignment="Center"
+                                     AutomationProperties.Name="Hostname or IP address"
                                      ToolTip="Enter a hostname or IP address" />
                         </DockPanel>
                         <DockPanel Margin="0,4,0,0">
@@ -447,6 +461,7 @@
                             <ComboBox DockPanel.Dock="Right" Margin="6,0,0,0"
                                       ItemsSource="{Binding CidrPrefixes}"
                                       SelectedItem="{Binding SelectedCidrPrefix}"
+                                      AutomationProperties.Name="CIDR prefix"
                                       MinWidth="70" Height="28" FontSize="12" />
                             <TextBox Text="{Binding NetworkIp, UpdateSourceTrigger=PropertyChanged}"
                                      Foreground="White" CaretBrush="White"
@@ -454,6 +469,7 @@
                                      BorderThickness="1" Padding="8,0"
                                      Height="30" FontSize="12"
                                      VerticalContentAlignment="Center"
+                                     AutomationProperties.Name="Network address"
                                      ToolTip="e.g. 192.168.1.0" />
                         </DockPanel>
                     </StackPanel>

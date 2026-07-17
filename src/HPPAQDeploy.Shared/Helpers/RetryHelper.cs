@@ -45,8 +45,10 @@ public static class RetryHelper
         CancellationToken ct = default,
         [System.Runtime.CompilerServices.CallerMemberName] string? caller = null)
     {
+        ArgumentNullException.ThrowIfNull(action);
         int retries = maxRetries ?? AppSettings.RetryMaxAttempts;
         int delayMs = baseDelayMs ?? AppSettings.RetryBaseDelayMs;
+        ValidateArguments(retries, delayMs);
         Exception? lastException = null;
 
         for (int attempt = 0; attempt <= retries; attempt++)
@@ -65,7 +67,7 @@ public static class RetryHelper
 
                 if (attempt < retries)
                 {
-                    int delay = delayMs * (1 << attempt); // 2s, 4s, 8s
+                    int delay = CalculateDelay(delayMs, attempt);
                     Logger.Warning(ex,
                         "Transient error in {Caller} (attempt {Attempt}/{MaxRetries}), retrying in {Delay}ms",
                         caller, attempt + 1, retries, delay);
@@ -94,8 +96,10 @@ public static class RetryHelper
         CancellationToken ct = default,
         [System.Runtime.CompilerServices.CallerMemberName] string? caller = null)
     {
+        ArgumentNullException.ThrowIfNull(action);
         int retries = maxRetries ?? AppSettings.RetryMaxAttempts;
         int delayMs = baseDelayMs ?? AppSettings.RetryBaseDelayMs;
+        ValidateArguments(retries, delayMs);
         Exception? lastException = null;
 
         for (int attempt = 0; attempt <= retries; attempt++)
@@ -115,7 +119,7 @@ public static class RetryHelper
 
                 if (attempt < retries)
                 {
-                    int delay = delayMs * (1 << attempt);
+                    int delay = CalculateDelay(delayMs, attempt);
                     Logger.Warning(ex,
                         "Transient error in {Caller} (attempt {Attempt}/{MaxRetries}), retrying in {Delay}ms",
                         caller, attempt + 1, retries, delay);
@@ -131,5 +135,19 @@ public static class RetryHelper
         }
 
         throw lastException ?? new InvalidOperationException("Retry loop completed without success or exception");
+    }
+
+    private static void ValidateArguments(int retries, int delayMs)
+    {
+        if (retries < 0 || retries > 30)
+            throw new ArgumentOutOfRangeException("maxRetries", "Retry count must be between 0 and 30.");
+        if (delayMs < 0)
+            throw new ArgumentOutOfRangeException("baseDelayMs", "Retry delay cannot be negative.");
+    }
+
+    private static int CalculateDelay(int baseDelayMs, int attempt)
+    {
+        var multiplier = 1L << Math.Min(attempt, 30);
+        return (int)Math.Min((long)baseDelayMs * multiplier, int.MaxValue);
     }
 }

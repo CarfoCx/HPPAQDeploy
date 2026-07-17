@@ -225,6 +225,21 @@ public class HpiaReportParserTests
     }
 
     [Fact]
+    public void ParseReportDirectory_DeduplicatesSoftPaqAcrossReports()
+    {
+        var dir = CreateTempDir();
+        File.WriteAllText(Path.Combine(dir, "report-a.json"),
+            """{"Recommendations":[{"SoftPaqID":"sp123456","Name":"Driver"}]}""");
+        File.WriteAllText(Path.Combine(dir, "report-b.json"),
+            """{"Recommendations":[{"SoftPaqID":"123456","Name":"Driver duplicate"}]}""");
+
+        var results = _parser.ParseReportDirectory(dir, deviceId: 1);
+
+        Assert.Single(results);
+        Assert.Equal("sp123456", results[0].SoftPaqId);
+    }
+
+    [Fact]
     public void ParseReportDirectory_NonexistentDir_ReturnsEmpty()
     {
         var results = _parser.ParseReportDirectory(@"C:\nonexistent_path_12345", deviceId: 1);

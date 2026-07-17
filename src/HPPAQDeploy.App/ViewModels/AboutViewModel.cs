@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
+using HPPAQDeploy.App.Helpers;
 using HPPAQDeploy.Shared.Configuration;
 
 namespace HPPAQDeploy.App.ViewModels;
@@ -8,12 +9,11 @@ namespace HPPAQDeploy.App.ViewModels;
 public partial class AboutViewModel : ObservableObject
 {
     public string AppName => "HPPAQDeploy";
-    public string Version => "1.0.0";
-    public string HpiaVersion => "5.3.4";
+    public string Version => AppVersionInfo.Version;
+    public string HpiaVersion => AppVersionInfo.HpiaVersion;
     public string Runtime => $".NET {Environment.Version.Major}.{Environment.Version.Minor}";
     public string DatabasePath => AppSettings.DatabasePath;
     public string LogPath => AppSettings.LogPath;
-    public string AppVersion => "v1.1.0";
     public string GitHubUrl => "https://github.com/CarfoCx/HPPAQDeploy";
     public string Description => "A network deployment tool for HP driver, BIOS, and firmware updates. " +
         "Uses HP Image Assistant (HPIA) to scan HP devices for missing updates and deploy them remotely via WMI/DCOM and SMB.";

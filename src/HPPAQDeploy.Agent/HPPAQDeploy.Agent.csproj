@@ -4,6 +4,7 @@
     <TargetFramework>net8.0-windows</TargetFramework>
     <RootNamespace>HPPAQDeploy.Agent</RootNamespace>
     <AssemblyName>HPPAQDeploy.Agent</AssemblyName>
+    <RuntimeIdentifiers>win-x64</RuntimeIdentifiers>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
   </PropertyGroup>

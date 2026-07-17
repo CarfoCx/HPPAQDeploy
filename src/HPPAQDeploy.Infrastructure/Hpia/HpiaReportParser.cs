@@ -56,10 +56,25 @@ public class HpiaReportParser
             }
         }
 
+        recommendations = recommendations
+            .GroupBy(
+                recommendation => NormalizeSoftPaqId(recommendation.SoftPaqId),
+                StringComparer.OrdinalIgnoreCase)
+            .Select(group => group.First())
+            .ToList();
+
         _logger.Information("Parsed {Count} recommendations from {Directory}",
             recommendations.Count, reportDirectory);
 
         return recommendations;
+    }
+
+    private static string NormalizeSoftPaqId(string softPaqId)
+    {
+        var normalized = softPaqId.Trim();
+        return normalized.StartsWith("sp", StringComparison.OrdinalIgnoreCase)
+            ? normalized[2..]
+            : normalized;
     }
 
     /// <summary>

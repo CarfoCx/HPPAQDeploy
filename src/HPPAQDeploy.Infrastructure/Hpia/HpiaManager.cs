@@ -67,80 +67,45 @@ public class HpiaManager : IHpiaManager
         await hostLock.WaitAsync(ct).ConfigureAwait(false);
         try
         {
-        var localHpiaPath = AppSettings.HpiaExtractPath;
+            var localHpiaPath = AppSettings.HpiaExtractPath;
 
-        if (!Directory.Exists(localHpiaPath))
-        {
-            throw new InvalidOperationException(
-                $"HPIA not extracted locally at {localHpiaPath}. Call ExtractLocallyAsync first.");
-        }
-
-        // Check if HPIA binaries already staged (in-memory cache + UNC check)
-        if (_stagedHosts.ContainsKey(hostname))
-        {
-            _logger.Information("HPIA already staged on {Hostname} this session, skipping binary copy", hostname);
-        }
-        else
-        {
-            bool alreadyStaged = false;
-            try
+            if (!Directory.Exists(localHpiaPath))
             {
-                var uncExe = $"\\\\{hostname}\\{RemoteHpiaExe[0]}${RemoteHpiaExe.Substring(2)}";
-                var uncDir = $"\\\\{hostname}\\{RemoteHpiaPath[0]}${RemoteHpiaPath.Substring(2)}";
-                // Verify exe exists AND enough files are present (full staging has 70+ files)
-                if (File.Exists(uncExe) && Directory.Exists(uncDir))
-                {
-                    var fileCount = Directory.GetFiles(uncDir, "*.dll").Length;
-                    alreadyStaged = fileCount >= 30; // Full HPIA has 50+ DLLs
-                    if (!alreadyStaged)
-                        _logger.Warning("HPIA on {Hostname} appears incomplete ({FileCount} DLLs found, expected 30+). Re-staging.", hostname, fileCount);
-                }
+                throw new InvalidOperationException(
+                    $"HPIA not extracted locally at {localHpiaPath}. Call ExtractLocallyAsync first.");
             }
-            catch (Exception ex) { Log.Debug("UNC pre-check failed for {Host}: {Error}", hostname, ex.Message); }
 
-            if (alreadyStaged)
+            // The session cache avoids repeated work without probing the admin share
+            // synchronously. File.Exists/Directory.GetFiles on an unreachable UNC path
+            // can block a thread for minutes and ignores this operation's cancellation
+            // token. The SMB transfer implementation uses robocopy /MIR, so the first
+            // stage in a new manager session efficiently copies only changed files.
+            if (_stagedHosts.ContainsKey(hostname))
             {
-                _logger.Information("HPIA already staged on {Hostname}, skipping binary copy", hostname);
+                _logger.Information("HPIA already staged on {Hostname} this session, skipping binary copy", hostname);
             }
             else
             {
-                // Clean up incomplete staging before re-copying
-                try
-                {
-                    var uncDir = $"\\\\{hostname}\\{RemoteHpiaPath[0]}${RemoteHpiaPath.Substring(2)}";
-                    if (Directory.Exists(uncDir))
-                    {
-                        _logger.Information("Cleaning incomplete HPIA staging on {Hostname} before re-staging", hostname);
-                        Directory.Delete(uncDir, true);
-                    }
-                }
-                catch (Exception ex)
-                {
-                    _logger.Warning(ex, "Could not clean old staging on {Hostname}, proceeding with overwrite", hostname);
-                }
-
-                // Stage HPIA binaries
                 await _fileTransfer.CopyToRemoteAsync(
                     hostname,
                     credential,
                     localHpiaPath,
                     RemoteHpiaPath,
                     ct).ConfigureAwait(false);
+
+                _stagedHosts.TryAdd(hostname, 0);
             }
 
-            _stagedHosts.TryAdd(hostname, 0);
-        }
+            if (AppSettings.UseOfflineRepository)
+            {
+                await StageRepositoryToRemoteAsync(hostname, credential, ct).ConfigureAwait(false);
+            }
+            else
+            {
+                _logger.Information("Using HPIA online mode on {Hostname}", hostname);
+            }
 
-        if (AppSettings.UseOfflineRepository)
-        {
-            await StageRepositoryToRemoteAsync(hostname, credential, ct).ConfigureAwait(false);
-        }
-        else
-        {
-            _logger.Information("Using HPIA online mode on {Hostname}", hostname);
-        }
-
-        _logger.Information("HPIA staged successfully to {Hostname}:{RemotePath}", hostname, RemoteHpiaPath);
+            _logger.Information("HPIA staged successfully to {Hostname}:{RemotePath}", hostname, RemoteHpiaPath);
         }
         finally
         {
@@ -330,6 +295,28 @@ public class HpiaManager : IHpiaManager
         IProgress<string> progress,
         CancellationToken ct)
     {
+        ArgumentNullException.ThrowIfNull(device);
+        ArgumentNullException.ThrowIfNull(credential);
+        ArgumentNullException.ThrowIfNull(selectedRecommendations);
+        if (selectedRecommendations.Count == 0)
+            throw new ArgumentException("At least one update must be selected for deployment.", nameof(selectedRecommendations));
+
+        var softPaqIds = selectedRecommendations
+            .Select(recommendation => recommendation?.SoftPaqId?.Trim())
+            .ToList();
+        if (softPaqIds.Any(string.IsNullOrWhiteSpace))
+            throw new ArgumentException("Selected updates contain an invalid SoftPaq ID.", nameof(selectedRecommendations));
+
+        var numericIds = softPaqIds
+            .Select(id => id!)
+            .Select(id => id.StartsWith("sp", StringComparison.OrdinalIgnoreCase) ? id[2..] : id)
+            .ToList();
+        if (numericIds.Any(id => id.Length == 0 || id.Any(c => !char.IsAsciiDigit(c))))
+        {
+            throw new ArgumentException("Selected updates contain an invalid SoftPaq ID.", nameof(selectedRecommendations));
+        }
+        numericIds = numericIds.Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+
         var target = RemotePathHelper.GetTarget(device);
         _logger.Information("Deploying HPIA updates to {Hostname} ({Count} selected)",
             target, selectedRecommendations.Count);
@@ -361,63 +348,53 @@ public class HpiaManager : IHpiaManager
             _logger.Information("Configured BIOS password environment variable for {Hostname}", target);
         }
 
-        // Build SoftPaq list from selected recommendations
-        var softPaqIds = selectedRecommendations
-            .Select(r => r.SoftPaqId)
-            .Where(id => !string.IsNullOrEmpty(id))
-            .Distinct()
-            .ToList();
-
         // Build the HPIA command line
-        string commandLine;
         var offlineModeArg = GetOfflineModeArgument();
 
-        if (softPaqIds.Count > 0)
+        var spListFile = Path.Combine(RemoteHpiaPath, "splist.txt");
+        var localSpListFile = Path.Combine(Path.GetTempPath(), $"hppaq-splist-{Guid.NewGuid():N}.txt");
+        try
         {
             // Write a SoftPaq list file to the remote machine.
             // HPIA's /SPList expects a text file with one numeric ID per line (no "sp" prefix).
-            var spListFile = Path.Combine(RemoteHpiaPath, "splist.txt");
-            var numericIds = softPaqIds
-                .Select(id => id.StartsWith("sp", StringComparison.OrdinalIgnoreCase) ? id.Substring(2) : id)
-                .ToList();
-            try
-            {
-                var uncSpListPath = RemotePathHelper.ToUncPath(target, spListFile);
-                File.WriteAllLines(uncSpListPath, numericIds);
-                _logger.Information("Wrote SPList file to {Hostname} with {Count} SoftPaq(s): {Ids}",
-                    target, numericIds.Count, string.Join(", ", numericIds));
-            }
-            catch (Exception ex)
-            {
-                _logger.Warning(ex, "Failed to write SPList file to {Hostname}, falling back to full install", target);
-            }
-
-            // Use /SPList to tell HPIA to only install the specified SoftPaqs
-            commandLine =
-                $"\"{RemoteHpiaExe}\" /Operation:Analyze /Action:Install " +
-                $"/Silent /Noninteractive " +
-                $"/SoftpaqDownloadFolder:\"{RemoteDownloadsPath}\" " +
-                $"/ReportFolder:\"{RemoteReportsPath}\"" +
-                $" /Debug /LogFolder:\"{remoteLogPath}\"" +
-                $" /SPList:\"{spListFile}\"" +
-                offlineModeArg +
-                biosFlags;
+            await File.WriteAllLinesAsync(localSpListFile, numericIds, ct).ConfigureAwait(false);
+            await _fileTransfer.CopyToRemoteAsync(
+                target,
+                credential,
+                localSpListFile,
+                spListFile,
+                ct).ConfigureAwait(false);
+            _logger.Information("Wrote SPList file to {Hostname} with {Count} SoftPaq(s): {Ids}",
+                target, numericIds.Count, string.Join(", ", numericIds));
         }
-        else
+        catch (OperationCanceledException)
         {
-            // No specific SoftPaqs selected — install all recommended updates
-            commandLine =
-                $"\"{RemoteHpiaExe}\" /Operation:Analyze /Category:All /Selection:All " +
-                $"/Action:Install /Silent /Noninteractive " +
-                $"/SoftpaqDownloadFolder:\"{RemoteDownloadsPath}\" " +
-                $"/ReportFolder:\"{RemoteReportsPath}\"" +
-                $" /Debug /LogFolder:\"{remoteLogPath}\"" +
-                offlineModeArg +
-                biosFlags;
+            throw;
         }
+        catch (Exception ex)
+        {
+            throw new IOException(
+                $"Could not write the selected SoftPaq list to {target}; deployment was not started.",
+                ex);
+        }
+        finally
+        {
+            try { File.Delete(localSpListFile); } catch { }
+        }
+
+        // /SPList is mandatory: a staging failure must never broaden a selected deployment to install all updates.
+        var commandLine =
+            $"\"{RemoteHpiaExe}\" /Operation:Analyze /Action:Install " +
+            $"/Silent /Noninteractive " +
+            $"/SoftpaqDownloadFolder:\"{RemoteDownloadsPath}\" " +
+            $"/ReportFolder:\"{RemoteReportsPath}\"" +
+            $" /Debug /LogFolder:\"{remoteLogPath}\"" +
+            $" /SPList:\"{spListFile}\"" +
+            offlineModeArg +
+            biosFlags;
 
         _logger.Information("Deploying {Count} SoftPaq(s) to {Hostname}: {SoftPaqs}",
-            softPaqIds.Count, target, string.Join(", ", softPaqIds));
+            numericIds.Count, target, string.Join(", ", numericIds));
 
         var timeout = TimeSpan.FromMinutes(AppSettings.DeployTimeoutMinutes);
 

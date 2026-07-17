@@ -5,8 +5,10 @@ using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using HPPAQDeploy.App.Services;
 using HPPAQDeploy.Core.Interfaces;
+using HPPAQDeploy.Core.Models;
 using HPPAQDeploy.Infrastructure.Hpia;
 using HPPAQDeploy.Shared.Configuration;
+using HPPAQDeploy.Shared.Helpers;
 using Serilog;
 
 namespace HPPAQDeploy.App.ViewModels;
@@ -17,6 +19,7 @@ public partial class SettingsViewModel : ObservableObject
     private readonly IEmailService _emailService;
     private readonly RepositorySyncer _repoSyncer;
     private readonly IDeviceRepository _deviceRepository;
+    private readonly SemaphoreSlim _repoStatusGate = new(1, 1);
 
     public CredentialManagerViewModel CredentialManager { get; }
 
@@ -27,16 +30,25 @@ public partial class SettingsViewModel : ObservableObject
     private int _wmiConcurrency = AppSettings.DefaultWmiConcurrency;
 
     [ObservableProperty]
+    private int _scanConcurrency = AppSettings.DefaultScanConcurrency;
+
+    [ObservableProperty]
     private int _deployConcurrency = AppSettings.DefaultDeployConcurrency;
 
     [ObservableProperty]
     private int _pingTimeoutMs = AppSettings.PingTimeoutMs;
 
     [ObservableProperty]
+    private int _wmiTimeoutSeconds = AppSettings.WmiTimeoutSeconds;
+
+    [ObservableProperty]
     private int _analysisTimeoutMinutes = AppSettings.AnalysisTimeoutMinutes;
 
     [ObservableProperty]
     private int _deployTimeoutMinutes = AppSettings.DeployTimeoutMinutes;
+
+    [ObservableProperty]
+    private int _fileTransferTimeoutMinutes = AppSettings.FileTransferTimeoutMinutes;
 
     [ObservableProperty]
     private int _retryMaxAttempts = AppSettings.RetryMaxAttempts;
@@ -158,7 +170,7 @@ public partial class SettingsViewModel : ObservableObject
         _deviceRepository = deviceRepository;
         CredentialManager = credentialManager;
         UpdateNextScanText();
-        UpdateRepoStatus();
+        AsyncInitHelper.SafeFireAndForget(UpdateRepoStatusAsync, nameof(SettingsViewModel));
 
         _scheduledScanService.PropertyChanged += (_, args) =>
         {
@@ -179,6 +191,13 @@ public partial class SettingsViewModel : ObservableObject
         NextScheduledScanText = next.HasValue
             ? $"Next scan: {next.Value:g}"
             : "Next scan: --";
+    }
+
+    public async Task RefreshStatusAsync()
+    {
+        LastScheduledScanText = FormatLastScan(_scheduledScanService.LastScanTime);
+        UpdateNextScanText();
+        await UpdateRepoStatusAsync();
     }
 
     private static string FormatLastScan(DateTime? dt)
@@ -214,17 +233,48 @@ public partial class SettingsViewModel : ObservableObject
     [RelayCommand]
     private void Save()
     {
+        PingConcurrency = Math.Clamp(PingConcurrency, 1, 4096);
+        WmiConcurrency = Math.Clamp(WmiConcurrency, 1, 1024);
+        ScanConcurrency = Math.Clamp(ScanConcurrency, 1, 50);
+        DeployConcurrency = Math.Clamp(DeployConcurrency, 1, 1024);
+        PingTimeoutMs = Math.Clamp(PingTimeoutMs, 100, 60_000);
+        WmiTimeoutSeconds = Math.Clamp(WmiTimeoutSeconds, 1, 300);
+        AnalysisTimeoutMinutes = Math.Clamp(AnalysisTimeoutMinutes, 1, 24 * 60);
+        DeployTimeoutMinutes = Math.Clamp(DeployTimeoutMinutes, 1, 24 * 60);
+        FileTransferTimeoutMinutes = Math.Clamp(FileTransferTimeoutMinutes, 1, 24 * 60);
+        RetryMaxAttempts = Math.Clamp(RetryMaxAttempts, 1, 10);
+        RetryBaseDelayMs = Math.Clamp(RetryBaseDelayMs, 0, 60_000);
+        SmtpPort = Math.Clamp(SmtpPort, 1, 65_535);
+
+        if (ScheduledScanEnabled)
+        {
+            try
+            {
+                _ = new CidrRange(ScheduledScanCidr.Trim());
+            }
+            catch (Exception ex)
+            {
+                StatusMessage = $"Scheduled scan CIDR is invalid: {ex.Message}";
+                SnackbarService.ShowError("Enter a valid CIDR before enabling scheduled scans.");
+                return;
+            }
+        }
+
         AppSettings.DefaultPingConcurrency = PingConcurrency;
         AppSettings.DefaultWmiConcurrency = WmiConcurrency;
+        AppSettings.DefaultScanConcurrency = ScanConcurrency;
         AppSettings.DefaultDeployConcurrency = DeployConcurrency;
         AppSettings.PingTimeoutMs = PingTimeoutMs;
+        AppSettings.WmiTimeoutSeconds = WmiTimeoutSeconds;
         AppSettings.AnalysisTimeoutMinutes = AnalysisTimeoutMinutes;
         AppSettings.DeployTimeoutMinutes = DeployTimeoutMinutes;
+        AppSettings.FileTransferTimeoutMinutes = FileTransferTimeoutMinutes;
         AppSettings.RetryMaxAttempts = RetryMaxAttempts;
         AppSettings.RetryBaseDelayMs = RetryBaseDelayMs;
 
         // Save scheduled scan settings
         AppSettings.ScheduledScanEnabled = ScheduledScanEnabled;
+        ScheduledScanCidr = ScheduledScanCidr.Trim();
         AppSettings.ScheduledScanCidr = ScheduledScanCidr;
         AppSettings.ScheduledScanInterval = TimeSpan.FromHours(IntervalLabelToHours(SelectedInterval));
 
@@ -261,10 +311,13 @@ public partial class SettingsViewModel : ObservableObject
     {
         PingConcurrency = 256;
         WmiConcurrency = 64;
+        ScanConcurrency = 5;
         DeployConcurrency = 10;
         PingTimeoutMs = 1000;
+        WmiTimeoutSeconds = 20;
         AnalysisTimeoutMinutes = 30;
         DeployTimeoutMinutes = 120;
+        FileTransferTimeoutMinutes = 15;
         RetryMaxAttempts = 3;
         RetryBaseDelayMs = 2000;
         ScheduledScanEnabled = false;
@@ -294,23 +347,25 @@ public partial class SettingsViewModel : ObservableObject
     [RelayCommand]
     private async Task TestEmailAsync()
     {
-        // Apply current UI values to AppSettings temporarily for the test
-        AppSettings.EmailNotificationsEnabled = true; // Force enabled for test
-        AppSettings.SmtpServer = SmtpServer;
-        AppSettings.SmtpPort = SmtpPort;
-        AppSettings.SmtpUseSsl = SmtpUseSsl;
-        AppSettings.SmtpUsername = SmtpUsername;
-        AppSettings.SmtpPassword = SmtpPassword;
-        AppSettings.EmailFrom = EmailFrom;
-        AppSettings.EmailTo = EmailTo;
-
         IsTestingEmail = true;
         TestEmailStatus = "Sending test email...";
 
         try
         {
-            await _emailService.TestConnectionAsync();
-            TestEmailStatus = "Test email sent successfully!";
+            var options = new EmailConnectionOptions(
+                true,
+                SmtpServer.Trim(),
+                Math.Clamp(SmtpPort, 1, 65_535),
+                SmtpUseSsl,
+                SmtpUsername.Trim(),
+                SmtpPassword,
+                EmailFrom.Trim(),
+                EmailTo.Trim());
+
+            var sent = await _emailService.TestConnectionAsync(options);
+            TestEmailStatus = sent
+                ? "Test email sent successfully!"
+                : "Enter an SMTP server, sender, and at least one recipient.";
         }
         catch (Exception ex)
         {
@@ -318,8 +373,6 @@ public partial class SettingsViewModel : ObservableObject
         }
         finally
         {
-            // Restore the actual enabled state
-            AppSettings.EmailNotificationsEnabled = EmailNotificationsEnabled;
             IsTestingEmail = false;
         }
     }
@@ -370,7 +423,7 @@ public partial class SettingsViewModel : ObservableObject
             RepoSyncStatus = fileCount > 0
                 ? $"Sync complete! {fileCount} files downloaded."
                 : "Sync completed but repository is empty. Check logs.";
-            UpdateRepoStatus();
+            await UpdateRepoStatusAsync();
         }
         catch (Exception ex)
         {
@@ -409,19 +462,35 @@ public partial class SettingsViewModel : ObservableObject
         return password.Length <= 2 ? "****" : password[..2] + "****";
     }
 
-    private void UpdateRepoStatus()
+    private async Task UpdateRepoStatusAsync()
     {
-        var repoPath = AppSettings.RepositoryPath;
-        if (Directory.Exists(repoPath))
+        if (!await _repoStatusGate.WaitAsync(0))
+            return;
+
+        try
         {
-            var files = Directory.GetFiles(repoPath, "*", SearchOption.AllDirectories);
-            RepoStatus = files.Length > 0
-                ? $"{files.Length} files in local repository"
-                : "Repository empty";
+            var repoPath = AppSettings.RepositoryPath;
+            if (Directory.Exists(repoPath))
+            {
+                var fileCount = await Task.Run(() =>
+                    Directory.EnumerateFiles(repoPath, "*", SearchOption.AllDirectories).Count());
+                RepoStatus = fileCount > 0
+                    ? $"{fileCount} files in local repository"
+                    : "Repository empty";
+            }
+            else
+            {
+                RepoStatus = "Not synced yet";
+            }
         }
-        else
+        catch (Exception ex)
         {
-            RepoStatus = "Not synced yet";
+            RepoStatus = "Repository status unavailable";
+            Log.Warning(ex, "Failed to inspect repository path {RepositoryPath}", AppSettings.RepositoryPath);
+        }
+        finally
+        {
+            _repoStatusGate.Release();
         }
     }
 }

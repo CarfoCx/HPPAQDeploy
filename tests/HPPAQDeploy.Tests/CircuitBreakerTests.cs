@@ -64,15 +64,50 @@ public class CircuitBreakerTests
     [Fact]
     public void HalfOpen_AllowsProbeAfterDuration()
     {
-        // Use a very short open duration
-        var cb = new CircuitBreaker(failureThreshold: 1, openDuration: TimeSpan.FromMilliseconds(50));
+        var clock = new ManualTimeProvider();
+        var cb = new CircuitBreaker(
+            failureThreshold: 1,
+            openDuration: TimeSpan.FromMinutes(1),
+            timeProvider: clock);
 
         cb.RecordFailure("host1");
         Assert.True(cb.IsOpen("host1"));
 
-        Thread.Sleep(100);
-        // After duration, should transition to half-open and allow probe
+        clock.Advance(TimeSpan.FromMinutes(1));
         Assert.False(cb.IsOpen("host1"));
+    }
+
+    [Fact]
+    public void HalfOpen_AllowsOnlyOneProbe()
+    {
+        var clock = new ManualTimeProvider();
+        var cb = new CircuitBreaker(1, TimeSpan.FromMinutes(1), timeProvider: clock);
+        cb.RecordFailure("host1");
+        clock.Advance(TimeSpan.FromMinutes(1));
+
+        Assert.False(cb.IsOpen("host1"));
+        Assert.True(cb.IsOpen("host1"));
+
+        cb.RecordFailure("host1");
+        Assert.True(cb.IsOpen("host1"));
+    }
+
+    [Fact]
+    public void FailuresOutsideTrackingWindow_DoNotAccumulate()
+    {
+        var clock = new ManualTimeProvider();
+        var cb = new CircuitBreaker(
+            failureThreshold: 2,
+            trackingWindow: TimeSpan.FromMinutes(5),
+            timeProvider: clock);
+
+        cb.RecordFailure("host1");
+        clock.Advance(TimeSpan.FromMinutes(6));
+        cb.RecordFailure("host1");
+
+        Assert.False(cb.IsOpen("host1"));
+        cb.RecordFailure("host1");
+        Assert.True(cb.IsOpen("host1"));
     }
 
     [Fact]
@@ -83,5 +118,14 @@ public class CircuitBreakerTests
         cb.RecordFailure("HOST1");
         cb.RecordFailure("host1");
         Assert.True(cb.IsOpen("Host1"));
+    }
+
+    private sealed class ManualTimeProvider : TimeProvider
+    {
+        private DateTimeOffset _utcNow = new(2026, 1, 1, 0, 0, 0, TimeSpan.Zero);
+
+        public override DateTimeOffset GetUtcNow() => _utcNow;
+
+        public void Advance(TimeSpan duration) => _utcNow += duration;
     }
 }

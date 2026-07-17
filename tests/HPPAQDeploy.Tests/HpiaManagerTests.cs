@@ -96,11 +96,89 @@ public class HpiaManagerTests : IDisposable
         _remoteExecutorMock.Verify(r => r.ExecuteAsync(
             "deployhost1",
             _cred,
-            It.Is<string>(cmd => cmd.Contains("/Operation:Analyze") && cmd.Contains("/Action:Install")),
+            It.Is<string>(cmd => cmd.Contains("/Operation:Analyze") &&
+                                 cmd.Contains("/Action:Install") &&
+                                 cmd.Contains("/SPList:")),
             It.IsAny<string>(),
             It.IsAny<TimeSpan>(),
             It.IsAny<CancellationToken>(),
             It.IsAny<IProgress<string>?>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task DeployUpdatesAsync_RejectsEmptySelectionInsteadOfInstallingAll()
+    {
+        var device = new Device { Id = 1, Hostname = "emptyselectionhost" };
+
+        await Assert.ThrowsAsync<ArgumentException>(() =>
+            _manager.DeployUpdatesAsync(
+                device,
+                _cred,
+                Array.Empty<HpiaRecommendation>(),
+                new Progress<string>(),
+                CancellationToken.None));
+
+        _remoteExecutorMock.VerifyNoOtherCalls();
+    }
+
+    [Fact]
+    public async Task DeployUpdatesAsync_RejectsInvalidSoftPaqId()
+    {
+        var device = new Device { Id = 1, Hostname = "invalidsoftpaqhost" };
+        var recommendations = new[]
+        {
+            new HpiaRecommendation { SoftPaqId = "../../payload" }
+        };
+
+        await Assert.ThrowsAsync<ArgumentException>(() =>
+            _manager.DeployUpdatesAsync(
+                device,
+                _cred,
+                recommendations,
+                new Progress<string>(),
+                CancellationToken.None));
+    }
+
+    [Fact]
+    public async Task DeployUpdatesAsync_DeduplicatesEquivalentSoftPaqIds()
+    {
+        var stagedIds = new List<string>();
+        _fileTransferMock
+            .Setup(transfer => transfer.CopyToRemoteAsync(
+                It.IsAny<string>(),
+                It.IsAny<NetworkCredential>(),
+                It.IsAny<string>(),
+                It.IsAny<string>(),
+                It.IsAny<CancellationToken>()))
+            .Callback<string, NetworkCredential, string, string, CancellationToken>(
+                (_, _, localPath, remotePath, _) =>
+                {
+                    if (remotePath.EndsWith("splist.txt", StringComparison.OrdinalIgnoreCase))
+                        stagedIds.AddRange(File.ReadAllLines(localPath));
+                })
+            .Returns(Task.CompletedTask);
+        _remoteExecutorMock
+            .Setup(executor => executor.ExecuteAsync(
+                It.IsAny<string>(),
+                It.IsAny<NetworkCredential>(),
+                It.IsAny<string>(),
+                It.IsAny<string>(),
+                It.IsAny<TimeSpan>(),
+                It.IsAny<CancellationToken>(),
+                It.IsAny<IProgress<string>?>()))
+            .ReturnsAsync(new RemoteProcessResult(0, string.Empty, string.Empty));
+
+        await _manager.DeployUpdatesAsync(
+            new Device { Id = 1, Hostname = "duplicatehost" },
+            _cred,
+            [
+                new HpiaRecommendation { SoftPaqId = "SP001" },
+                new HpiaRecommendation { SoftPaqId = "001" }
+            ],
+            new Progress<string>(),
+            CancellationToken.None);
+
+        Assert.Equal(["001"], stagedIds);
     }
 
     [Fact]

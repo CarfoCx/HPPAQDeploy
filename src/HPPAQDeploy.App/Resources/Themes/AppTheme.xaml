@@ -69,6 +69,21 @@
     <SolidColorBrush x:Key="InactiveDotBrush" Color="#666666" />
     <SolidColorBrush x:Key="TopNavBarBrush" Color="#161626" />
 
+    <!-- Shared keyboard-only focus cue for custom control templates. -->
+    <Style x:Key="AppFocusVisual">
+        <Setter Property="Control.Template">
+            <Setter.Value>
+                <ControlTemplate>
+                    <Rectangle Margin="2"
+                               Stroke="{StaticResource HpLightBlueBrush}"
+                               StrokeThickness="2"
+                               StrokeDashArray="2,1"
+                               SnapsToDevicePixels="True" />
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+    </Style>
+
     <!-- Gradient Brushes -->
     <LinearGradientBrush x:Key="GettingStartedGradientBrush" StartPoint="0,0" EndPoint="1,0.3">
         <GradientStop Color="{StaticResource CardBg}" Offset="0" />
@@ -245,6 +260,7 @@
         <Setter Property="Padding" Value="20,0,16,0" />
         <Setter Property="FontSize" Value="13" />
         <Setter Property="Cursor" Value="Hand" />
+        <Setter Property="FocusVisualStyle" Value="{StaticResource AppFocusVisual}" />
         <Setter Property="Template">
             <Setter.Value>
                 <ControlTemplate TargetType="Button">
@@ -278,6 +294,7 @@
         <Setter Property="Padding" Value="20,0,16,0" />
         <Setter Property="FontSize" Value="13" />
         <Setter Property="Cursor" Value="Hand" />
+        <Setter Property="FocusVisualStyle" Value="{StaticResource AppFocusVisual}" />
         <Setter Property="Template">
             <Setter.Value>
                 <ControlTemplate TargetType="RadioButton">
@@ -329,9 +346,10 @@
         <Setter Property="BorderThickness" Value="0" />
         <Setter Property="Height" Value="38" />
         <Setter Property="HorizontalContentAlignment" Value="Center" />
-        <Setter Property="Padding" Value="12,0" />
+        <Setter Property="Padding" Value="9,0" />
         <Setter Property="FontSize" Value="12" />
         <Setter Property="Cursor" Value="Hand" />
+        <Setter Property="FocusVisualStyle" Value="{StaticResource AppFocusVisual}" />
         <Setter Property="Template">
             <Setter.Value>
                 <ControlTemplate TargetType="RadioButton">
@@ -387,6 +405,7 @@
         <Setter Property="Padding" Value="14,6" />
         <Setter Property="BorderThickness" Value="0" />
         <Setter Property="Cursor" Value="Hand" />
+        <Setter Property="FocusVisualStyle" Value="{StaticResource AppFocusVisual}" />
         <Setter Property="Template">
             <Setter.Value>
                 <ControlTemplate TargetType="Button">
@@ -395,8 +414,8 @@
                             SnapsToDevicePixels="True">
                         <Border.Background>
                             <LinearGradientBrush StartPoint="0,0" EndPoint="0,1">
-                                <GradientStop Color="#0096D6" Offset="0" />
-                                <GradientStop Color="#0088C2" Offset="1" />
+                                <GradientStop Color="#0078B0" Offset="0" />
+                                <GradientStop Color="#006A9E" Offset="1" />
                             </LinearGradientBrush>
                         </Border.Background>
                         <Border.Effect>
@@ -411,8 +430,8 @@
                             <Setter TargetName="border" Property="Background">
                                 <Setter.Value>
                                     <LinearGradientBrush StartPoint="0,0" EndPoint="0,1">
-                                        <GradientStop Color="#00AAEE" Offset="0" />
-                                        <GradientStop Color="#0096D6" Offset="1" />
+                                        <GradientStop Color="#007AB8" Offset="0" />
+                                        <GradientStop Color="#0074A8" Offset="1" />
                                     </LinearGradientBrush>
                                 </Setter.Value>
                             </Setter>
@@ -426,7 +445,7 @@
                         <Trigger Property="IsPressed" Value="True">
                             <Setter TargetName="border" Property="Background">
                                 <Setter.Value>
-                                    <SolidColorBrush Color="#007AB8" />
+                                    <SolidColorBrush Color="#005A9E" />
                                 </Setter.Value>
                             </Setter>
                             <Setter TargetName="border" Property="Effect">
@@ -459,6 +478,7 @@
         <Setter Property="FontWeight" Value="Normal" />
         <Setter Property="Padding" Value="14,6" />
         <Setter Property="Cursor" Value="Hand" />
+        <Setter Property="FocusVisualStyle" Value="{StaticResource AppFocusVisual}" />
         <Setter Property="Template">
             <Setter.Value>
                 <ControlTemplate TargetType="Button">
@@ -498,6 +518,7 @@
         <Setter Property="Padding" Value="14,6" />
         <Setter Property="BorderThickness" Value="0" />
         <Setter Property="Cursor" Value="Hand" />
+        <Setter Property="FocusVisualStyle" Value="{StaticResource AppFocusVisual}" />
         <Setter Property="Template">
             <Setter.Value>
                 <ControlTemplate TargetType="Button">
@@ -506,8 +527,8 @@
                             SnapsToDevicePixels="True">
                         <Border.Background>
                             <LinearGradientBrush StartPoint="0,0" EndPoint="0,1">
-                                <GradientStop Color="#F44336" Offset="0" />
-                                <GradientStop Color="#D32F2F" Offset="1" />
+                                <GradientStop Color="#C62828" Offset="0" />
+                                <GradientStop Color="#B71C1C" Offset="1" />
                             </LinearGradientBrush>
                         </Border.Background>
                         <Border.Effect>
@@ -522,8 +543,8 @@
                             <Setter TargetName="border" Property="Background">
                                 <Setter.Value>
                                     <LinearGradientBrush StartPoint="0,0" EndPoint="0,1">
-                                        <GradientStop Color="#FF5252" Offset="0" />
-                                        <GradientStop Color="#F44336" Offset="1" />
+                                        <GradientStop Color="#D32F2F" Offset="0" />
+                                        <GradientStop Color="#C62828" Offset="1" />
                                     </LinearGradientBrush>
                                 </Setter.Value>
                             </Setter>
@@ -559,6 +580,7 @@
         <Setter Property="Padding" Value="14,6" />
         <Setter Property="BorderThickness" Value="0" />
         <Setter Property="Cursor" Value="Hand" />
+        <Setter Property="FocusVisualStyle" Value="{StaticResource AppFocusVisual}" />
         <Setter Property="Template">
             <Setter.Value>
                 <ControlTemplate TargetType="Button">
@@ -567,8 +589,8 @@
                             SnapsToDevicePixels="True">
                         <Border.Background>
                             <LinearGradientBrush StartPoint="0,0" EndPoint="0,1">
-                                <GradientStop Color="#4CAF50" Offset="0" />
-                                <GradientStop Color="#43A047" Offset="1" />
+                                <GradientStop Color="#2E7D32" Offset="0" />
+                                <GradientStop Color="#256C2A" Offset="1" />
                             </LinearGradientBrush>
                         </Border.Background>
                         <Border.Effect>
@@ -583,8 +605,8 @@
                             <Setter TargetName="border" Property="Background">
                                 <Setter.Value>
                                     <LinearGradientBrush StartPoint="0,0" EndPoint="0,1">
-                                        <GradientStop Color="#66BB6A" Offset="0" />
-                                        <GradientStop Color="#4CAF50" Offset="1" />
+                                        <GradientStop Color="#338038" Offset="0" />
+                                        <GradientStop Color="#2E7D32" Offset="1" />
                                     </LinearGradientBrush>
                                 </Setter.Value>
                             </Setter>
@@ -592,7 +614,7 @@
                         <Trigger Property="IsPressed" Value="True">
                             <Setter TargetName="border" Property="Background">
                                 <Setter.Value>
-                                    <SolidColorBrush Color="#388E3C" />
+                                    <SolidColorBrush Color="#1B5E20" />
                                 </Setter.Value>
                             </Setter>
                         </Trigger>
@@ -619,6 +641,7 @@
         <Setter Property="FontWeight" Value="SemiBold" />
         <Setter Property="Padding" Value="10,4" />
         <Setter Property="Cursor" Value="Hand" />
+        <Setter Property="FocusVisualStyle" Value="{StaticResource AppFocusVisual}" />
         <Setter Property="Template">
             <Setter.Value>
                 <ControlTemplate TargetType="Button">
@@ -670,6 +693,11 @@
         <Setter Property="CanUserResizeRows" Value="False" />
         <Setter Property="FontSize" Value="12.5" />
         <Setter Property="RowHeight" Value="38" />
+        <Setter Property="EnableRowVirtualization" Value="True" />
+        <Setter Property="EnableColumnVirtualization" Value="True" />
+        <Setter Property="VirtualizingPanel.IsVirtualizing" Value="True" />
+        <Setter Property="VirtualizingPanel.VirtualizationMode" Value="Recycling" />
+        <Setter Property="ScrollViewer.CanContentScroll" Value="True" />
     </Style>
 
     <!-- DataGrid Column Header -->
@@ -781,6 +809,7 @@
         <Setter Property="BorderThickness" Value="1" />
         <Setter Property="BorderBrush" Value="{StaticResource BorderSubtleBrush}" />
         <Setter Property="SelectionBrush" Value="{StaticResource HpBlueBrush}" />
+        <Setter Property="FocusVisualStyle" Value="{StaticResource AppFocusVisual}" />
         <Setter Property="Template">
             <Setter.Value>
                 <ControlTemplate TargetType="TextBox">
@@ -823,12 +852,16 @@
         <Setter Property="Padding" Value="10,8" />
         <Setter Property="BorderThickness" Value="1" />
         <Setter Property="BorderBrush" Value="{StaticResource BorderSubtleBrush}" />
+        <Setter Property="FocusVisualStyle" Value="{StaticResource AppFocusVisual}" />
         <Style.Triggers>
             <Trigger Property="IsMouseOver" Value="True">
                 <Setter Property="BorderBrush" Value="#55FFFFFF" />
             </Trigger>
             <Trigger Property="IsDropDownOpen" Value="True">
                 <Setter Property="BorderBrush" Value="{StaticResource BorderFocusBrush}" />
+            </Trigger>
+            <Trigger Property="IsKeyboardFocusWithin" Value="True">
+                <Setter Property="BorderBrush" Value="{StaticResource HpLightBlueBrush}" />
             </Trigger>
         </Style.Triggers>
     </Style>
@@ -857,6 +890,7 @@
         <Setter Property="Padding" Value="4,0" />
         <Setter Property="FontSize" Value="12" />
         <Setter Property="VerticalContentAlignment" Value="Center" />
+        <Setter Property="FocusVisualStyle" Value="{StaticResource AppFocusVisual}" />
     </Style>
 
     <!-- ═══════════════════════════════════════════════════════════════════
@@ -1022,6 +1056,7 @@
         <Setter Property="Foreground" Value="{StaticResource TextPrimaryBrush}" />
         <Setter Property="FontSize" Value="13" />
         <Setter Property="Cursor" Value="Hand" />
+        <Setter Property="FocusVisualStyle" Value="{StaticResource AppFocusVisual}" />
         <Setter Property="Template">
             <Setter.Value>
                 <ControlTemplate TargetType="CheckBox">
@@ -1050,6 +1085,10 @@
                         </Trigger>
                         <Trigger Property="IsMouseOver" Value="True">
                             <Setter TargetName="checkBorder" Property="BorderBrush" Value="#55FFFFFF" />
+                        </Trigger>
+                        <Trigger Property="IsEnabled" Value="False">
+                            <Setter Property="Foreground" Value="{StaticResource TextDisabledBrush}" />
+                            <Setter Property="Opacity" Value="0.6" />
                         </Trigger>
                         <MultiTrigger>
                             <MultiTrigger.Conditions>

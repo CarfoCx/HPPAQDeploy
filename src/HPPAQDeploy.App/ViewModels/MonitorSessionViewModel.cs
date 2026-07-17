@@ -7,6 +7,9 @@ namespace HPPAQDeploy.App.ViewModels;
 
 public partial class MonitorSessionViewModel : ObservableObject
 {
+    private const int MaxLogEntries = 2000;
+    public volatile bool SoftCancellationRequested;
+
     [ObservableProperty]
     private string _title = "";
 
@@ -70,7 +73,25 @@ public partial class MonitorSessionViewModel : ObservableObject
             {
                 FilteredLogs.Insert(0, entry);
             }
+
+            while (Logs.Count > MaxLogEntries)
+            {
+                var oldest = Logs[^1];
+                Logs.RemoveAt(Logs.Count - 1);
+                FilteredLogs.Remove(oldest);
+            }
         });
+    }
+
+    partial void OnLogFilterTextChanged(string value) => ApplyLogFilter();
+
+    partial void OnLogLevelFilterChanged(string value) => ApplyLogFilter();
+
+    private void ApplyLogFilter()
+    {
+        FilteredLogs.Clear();
+        foreach (var entry in Logs.Where(MatchesFilter))
+            FilteredLogs.Add(entry);
     }
 
     public bool MatchesFilter(DeploymentLogEntry entry)

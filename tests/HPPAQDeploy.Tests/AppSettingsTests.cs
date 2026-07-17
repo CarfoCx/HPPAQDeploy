@@ -39,4 +39,24 @@ public class AppSettingsTests
         var result = AppSettings.UnprotectString(plaintext);
         Assert.Equal(plaintext, result);
     }
+
+    [Theory]
+    [InlineData(double.NaN, 24)]
+    [InlineData(double.PositiveInfinity, 24)]
+    [InlineData(-10, 1)]
+    [InlineData(100000, 8760)]
+    public void ScheduledScanInterval_IsFiniteAndBounded(double input, double expectedHours)
+    {
+        Assert.Equal(expectedHours, AppSettings.NormalizeScheduledScanInterval(input).TotalHours);
+    }
+
+    [Theory]
+    [InlineData(-1, 1)]
+    [InlineData(0, 1)]
+    [InlineData(587, 587)]
+    [InlineData(99999, 65535)]
+    public void SmtpPort_IsBounded(int input, int expected)
+    {
+        Assert.Equal(expected, AppSettings.NormalizeSmtpPort(input));
+    }
 }

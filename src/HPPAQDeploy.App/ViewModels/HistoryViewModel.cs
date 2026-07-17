@@ -16,6 +16,7 @@ namespace HPPAQDeploy.App.ViewModels;
 public partial class HistoryViewModel : ObservableObject
 {
     private readonly IDeploymentHistoryRepository _historyRepository;
+    private readonly SemaphoreSlim _loadGate = new(1, 1);
 
     [ObservableProperty]
     private ObservableCollection<DeploymentHistory> _allHistory = [];
@@ -42,7 +43,7 @@ public partial class HistoryViewModel : ObservableObject
     [ObservableProperty]
     private string _selectedActionFilter = "All";
 
-    public List<string> ActionFilterOptions { get; } = ["All", "Deployed", "Failed", "Cancelled"];
+    public List<string> ActionFilterOptions { get; } = ["All", "Scanned", "Deployed", "Failed", "Cancelled"];
 
     // ── Summary Statistics ──
     [ObservableProperty]
@@ -146,6 +147,9 @@ public partial class HistoryViewModel : ObservableObject
     [RelayCommand]
     private async Task LoadHistoryAsync()
     {
+        if (!await _loadGate.WaitAsync(0))
+            return;
+
         IsLoading = true;
         try
         {
@@ -163,6 +167,7 @@ public partial class HistoryViewModel : ObservableObject
         finally
         {
             IsLoading = false;
+            _loadGate.Release();
         }
     }
 
@@ -177,7 +182,19 @@ public partial class HistoryViewModel : ObservableObject
             var sb = new StringBuilder();
             sb.AppendLine("Timestamp,Hostname,IP,Update,SoftPaq,Category,Action,Error");
             foreach (var h in FilteredHistory)
-                sb.AppendLine($"\"{h.Timestamp:yyyy-MM-dd HH:mm:ss}\",\"{h.DeviceHostname}\",\"{h.DeviceIpAddress}\",\"{h.UpdateName?.Replace("\"", "\"\"")}\",\"{h.SoftPaqId}\",\"{h.Category}\",\"{h.Action}\",\"{h.ErrorMessage?.Replace("\"", "\"\"")}\"");
+            {
+                sb.AppendLine(string.Join(",", new[]
+                {
+                    EscapeCsv(h.Timestamp.ToString("yyyy-MM-dd HH:mm:ss")),
+                    EscapeCsv(h.DeviceHostname),
+                    EscapeCsv(h.DeviceIpAddress),
+                    EscapeCsv(h.UpdateName),
+                    EscapeCsv(h.SoftPaqId),
+                    EscapeCsv(h.Category),
+                    EscapeCsv(h.Action),
+                    EscapeCsv(h.ErrorMessage)
+                }));
+            }
             await File.WriteAllTextAsync(path, sb.ToString());
             StatusMessage = $"Exported {FilteredHistory.Count} records to {path}";
             Log.Information("Deployment history exported to {Path}", path);
@@ -188,6 +205,15 @@ public partial class HistoryViewModel : ObservableObject
             SnackbarService.ShowError($"Export failed: {ex.Message}");
             Log.Error(ex, "Failed to export deployment history");
         }
+    }
+
+    private static string EscapeCsv(string? value)
+    {
+        var escaped = value ?? string.Empty;
+        if (escaped.Length > 0 && escaped[0] is '=' or '+' or '-' or '@' or '\t' or '\r' or '\n')
+            escaped = "'" + escaped;
+
+        return $"\"{escaped.Replace("\"", "\"\"")}\"";
     }
 
     [RelayCommand]

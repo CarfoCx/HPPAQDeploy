@@ -17,6 +17,7 @@ public partial class DashboardViewModel : ObservableObject
 {
     private readonly IDeviceRepository _deviceRepository;
     private readonly ScheduledScanService _scheduledScanService;
+    private readonly SemaphoreSlim _loadGate = new(1, 1);
 
     // Quick action navigation event — MainViewModel subscribes to this
     public static event EventHandler<string>? NavigationRequested;
@@ -118,6 +119,9 @@ public partial class DashboardViewModel : ObservableObject
 
     private async Task LoadDataAsync()
     {
+        if (!await _loadGate.WaitAsync(0))
+            return;
+
         IsLoading = true;
         try
         {
@@ -125,29 +129,71 @@ public partial class DashboardViewModel : ObservableObject
             _allDevices = deviceList;
 
             TotalDevices = deviceList.Count;
-            OnlineDevices = deviceList.Count(d => d.Status == DeviceStatus.Online || d.Status == DeviceStatus.ReadyToDeploy);
-            OfflineDevices = deviceList.Count(d => d.Status == DeviceStatus.Offline || d.Status == DeviceStatus.Unreachable);
+            var analyzedCount = 0;
+            var onlineCount = 0;
+            var offlineCount = 0;
+            var pendingCount = 0;
+            var criticalCount = 0;
+            var recommendedCount = 0;
+            var optionalCount = 0;
+            var upToDateCount = 0;
+            var devicesWithUpdatesCount = 0;
+            var devicesWithCriticalCount = 0;
 
-            var allRecommendations = deviceList.SelectMany(d => d.Recommendations ?? []).ToList();
+            foreach (var device in deviceList)
+            {
+                if (device.Status is DeviceStatus.Online or DeviceStatus.ReadyToDeploy)
+                    onlineCount++;
+                else if (device.Status is DeviceStatus.Offline or DeviceStatus.Unreachable)
+                    offlineCount++;
 
-            PendingUpdates = allRecommendations.Count;
-            TotalPendingUpdates = allRecommendations.Count;
-            CriticalUpdates = allRecommendations
-                .Count(r => r.Severity?.Equals("Critical", StringComparison.OrdinalIgnoreCase) == true);
-            RecommendedUpdates = allRecommendations
-                .Count(r => r.Severity?.Equals("Recommended", StringComparison.OrdinalIgnoreCase) == true);
-            OptionalUpdates = allRecommendations
-                .Count(r => r.Severity?.Equals("Optional", StringComparison.OrdinalIgnoreCase) == true);
+                var recommendations = device.Recommendations ?? [];
+                if (device.LastAnalyzed.HasValue)
+                {
+                    analyzedCount++;
+                    if (recommendations.Count == 0)
+                        upToDateCount++;
+                }
 
-            var analyzedDevices = deviceList.Where(d => d.LastAnalyzed.HasValue).ToList();
-            NeverScannedCount = deviceList.Count - analyzedDevices.Count;
-            DevicesUpToDate = analyzedDevices.Count(d => (d.Recommendations?.Count ?? 0) == 0);
-            DevicesWithUpdates = deviceList.Count(d => (d.Recommendations?.Count ?? 0) > 0);
-            DevicesWithCritical = deviceList.Count(d =>
-                d.Recommendations?.Any(r => r.Severity?.Equals("Critical", StringComparison.OrdinalIgnoreCase) == true) == true);
+                if (recommendations.Count > 0)
+                    devicesWithUpdatesCount++;
 
-            CompliancePercent = analyzedDevices.Count > 0
-                ? Math.Round((double)DevicesUpToDate / analyzedDevices.Count * 100, 1)
+                var deviceHasCritical = false;
+                foreach (var recommendation in recommendations)
+                {
+                    pendingCount++;
+                    if (recommendation.Severity?.Equals("Critical", StringComparison.OrdinalIgnoreCase) == true)
+                    {
+                        criticalCount++;
+                        deviceHasCritical = true;
+                    }
+                    else if (recommendation.Severity?.Equals("Recommended", StringComparison.OrdinalIgnoreCase) == true)
+                    {
+                        recommendedCount++;
+                    }
+                    else if (recommendation.Severity?.Equals("Optional", StringComparison.OrdinalIgnoreCase) == true)
+                    {
+                        optionalCount++;
+                    }
+                }
+
+                if (deviceHasCritical)
+                    devicesWithCriticalCount++;
+            }
+
+            OnlineDevices = onlineCount;
+            OfflineDevices = offlineCount;
+            PendingUpdates = pendingCount;
+            TotalPendingUpdates = pendingCount;
+            CriticalUpdates = criticalCount;
+            RecommendedUpdates = recommendedCount;
+            OptionalUpdates = optionalCount;
+            NeverScannedCount = deviceList.Count - analyzedCount;
+            DevicesUpToDate = upToDateCount;
+            DevicesWithUpdates = devicesWithUpdatesCount;
+            DevicesWithCritical = devicesWithCriticalCount;
+            CompliancePercent = analyzedCount > 0
+                ? Math.Round((double)upToDateCount / analyzedCount * 100, 1)
                 : 0;
 
             RecentDevices = new ObservableCollection<Device>(
@@ -163,6 +209,7 @@ public partial class DashboardViewModel : ObservableObject
         finally
         {
             IsLoading = false;
+            _loadGate.Release();
         }
     }
 

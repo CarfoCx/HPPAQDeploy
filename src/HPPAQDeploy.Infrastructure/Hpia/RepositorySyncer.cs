@@ -80,7 +80,7 @@ public class RepositorySyncer
         await EnsureHpcmslInstalledAsync(ct);
 
         // Build the PowerShell script for repository sync
-        var platforms = platformIds.Distinct().ToList();
+        var platforms = NormalizePlatformIds(platformIds);
         if (platforms.Count == 0)
         {
             _logger.Warning("No platform IDs provided for repository sync");
@@ -145,20 +145,26 @@ public class RepositorySyncer
         sb.AppendLine("Set-RepositoryConfiguration -Setting OfflineCacheMode -CacheValue Enable");
         sb.AppendLine();
 
-        // Add filters for each platform with multiple OS versions for maximum coverage
-        // Not all platforms support all OS versions, so we add multiple and let HPCMSL skip what doesn't exist
+        // Honor the fleet OS detected by the caller, then add currently supported
+        // fallback catalogs for mixed fleets. Distinct prevents duplicate filters.
         var osVersions = new List<(string os, string ver)>
         {
-            ("Win11", "24H2"), ("Win11", "23H2"), ("Win10", "22H2")
-        };
+            (os, osVer), ("Win11", "24H2"), ("Win11", "23H2"), ("Win10", "22H2")
+        }
+        .Where(item => !string.IsNullOrWhiteSpace(item.os) && !string.IsNullOrWhiteSpace(item.ver))
+        .Distinct()
+        .ToList();
 
         foreach (var platformId in platforms)
         {
+            var escapedPlatformId = platformId.Replace("'", "''");
             foreach (var (osName, osVersion) in osVersions)
             {
-                sb.AppendLine($"try {{ Add-RepositoryFilter -Platform '{platformId}' -Os '{osName}' -OsVer '{osVersion}' -Category Bios,Firmware,Driver,Software -ErrorAction SilentlyContinue }} catch {{ }}");
+                var escapedOsName = osName.Replace("'", "''");
+                var escapedOsVersion = osVersion.Replace("'", "''");
+                sb.AppendLine($"try {{ Add-RepositoryFilter -Platform '{escapedPlatformId}' -Os '{escapedOsName}' -OsVer '{escapedOsVersion}' -Category Bios,Firmware,Driver,Software -ErrorAction SilentlyContinue }} catch {{ }}");
             }
-            sb.AppendLine($"Write-Output 'Added filters for platform {platformId}'");
+            sb.AppendLine($"Write-Output 'Added filters for platform {escapedPlatformId}'");
         }
         sb.AppendLine();
 
@@ -176,35 +182,61 @@ public class RepositorySyncer
         return sb.ToString();
     }
 
+    private static List<string> NormalizePlatformIds(IEnumerable<string> platformIds) =>
+        platformIds
+            .Where(id => !string.IsNullOrWhiteSpace(id))
+            .Select(id => id.Trim())
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
     private async Task<string> RunPowerShellAsync(string script, CancellationToken ct, int timeoutMinutes = 10)
     {
-        var psi = new ProcessStartInfo
+        if (timeoutMinutes <= 0)
+            throw new ArgumentOutOfRangeException(nameof(timeoutMinutes));
+
+        var scriptPath = Path.Combine(Path.GetTempPath(), $"hppaq-powershell-{Guid.NewGuid():N}.ps1");
+        await File.WriteAllTextAsync(scriptPath, script, ct).ConfigureAwait(false);
+        try
         {
-            FileName = "powershell.exe",
-            Arguments = $"-NoProfile -NonInteractive -ExecutionPolicy Bypass -Command \"{script.Replace("\"", "\\\"")}\"",
-            UseShellExecute = false,
-            CreateNoWindow = true,
-            RedirectStandardOutput = true,
-            RedirectStandardError = true
-        };
+            var psi = CreatePowerShellStartInfo(scriptPath);
+            using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            timeoutCts.CancelAfter(TimeSpan.FromMinutes(timeoutMinutes));
 
-        // Create a linked token that respects both user cancellation and the timeout
-        using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
-        timeoutCts.CancelAfter(TimeSpan.FromMinutes(timeoutMinutes));
-        var linkedCt = timeoutCts.Token;
+            using var process = Process.Start(psi)
+                ?? throw new InvalidOperationException("Failed to start PowerShell");
+            var outputTask = process.StandardOutput.ReadToEndAsync(timeoutCts.Token);
+            var errorTask = process.StandardError.ReadToEndAsync(timeoutCts.Token);
 
-        using var process = Process.Start(psi)
-            ?? throw new InvalidOperationException("Failed to start PowerShell");
+            try
+            {
+                await process.WaitForExitAsync(timeoutCts.Token).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+            {
+                await StopProcessAsync(process).ConfigureAwait(false);
+                throw new TimeoutException($"PowerShell operation timed out after {timeoutMinutes} minutes.");
+            }
+            catch (OperationCanceledException)
+            {
+                await StopProcessAsync(process).ConfigureAwait(false);
+                throw;
+            }
 
-        var output = await process.StandardOutput.ReadToEndAsync(linkedCt);
-        var error = await process.StandardError.ReadToEndAsync(linkedCt);
+            var output = await outputTask.ConfigureAwait(false);
+            var error = await errorTask.ConfigureAwait(false);
+            if (process.ExitCode != 0)
+                throw new InvalidOperationException(
+                    $"PowerShell exited with code {process.ExitCode}: {FirstMeaningfulLine(error)}");
 
-        await process.WaitForExitAsync(linkedCt);
+            if (!string.IsNullOrWhiteSpace(error))
+                _logger.Warning("PowerShell stderr: {Error}", error);
 
-        if (!string.IsNullOrWhiteSpace(error))
-            _logger.Warning("PowerShell stderr: {Error}", error);
-
-        return output.Trim();
+            return output.Trim();
+        }
+        finally
+        {
+            try { File.Delete(scriptPath); } catch { }
+        }
     }
 
     /// <summary>
@@ -225,7 +257,7 @@ public class RepositorySyncer
         progress?.Report("Ensuring HPCMSL module is installed...");
         await EnsureHpcmslInstalledAsync(ct);
 
-        var platforms = platformIds.Distinct().ToList();
+        var platforms = NormalizePlatformIds(platformIds);
         if (platforms.Count == 0)
         {
             progress?.Report("No platform IDs found. Scan devices first.");
@@ -240,47 +272,49 @@ public class RepositorySyncer
 
         try
         {
-            var psi = new ProcessStartInfo
-            {
-                FileName = "powershell.exe",
-                Arguments = $"-NoProfile -NonInteractive -ExecutionPolicy Bypass -File \"{scriptPath}\"",
-                UseShellExecute = false,
-                CreateNoWindow = true,
-                RedirectStandardOutput = true,
-                RedirectStandardError = true
-            };
+            var psi = CreatePowerShellStartInfo(scriptPath);
 
             using var process = Process.Start(psi)
                 ?? throw new InvalidOperationException("Failed to start PowerShell");
+            using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            timeoutCts.CancelAfter(TimeSpan.FromMinutes(30));
+            var linkedCt = timeoutCts.Token;
 
             // Stream stdout line-by-line for real-time progress
-            var errorTask = process.StandardError.ReadToEndAsync(ct);
-            string? line;
-            while ((line = await process.StandardOutput.ReadLineAsync(ct)) != null)
+            var errorTask = process.StandardError.ReadToEndAsync(linkedCt);
+            try
             {
-                if (!string.IsNullOrWhiteSpace(line))
+                string? line;
+                while ((line = await process.StandardOutput.ReadLineAsync(linkedCt).ConfigureAwait(false)) != null)
                 {
-                    _logger.Information("HPCMSL: {Line}", line);
-                    progress?.Report($"HPCMSL: {line}");
+                    if (!string.IsNullOrWhiteSpace(line))
+                    {
+                        _logger.Information("HPCMSL: {Line}", line);
+                        progress?.Report($"HPCMSL: {line}");
+                    }
                 }
+
+                await process.WaitForExitAsync(linkedCt).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+            {
+                await StopProcessAsync(process).ConfigureAwait(false);
+                throw new TimeoutException("Repository sync timed out after 30 minutes.");
+            }
+            catch (OperationCanceledException)
+            {
+                await StopProcessAsync(process).ConfigureAwait(false);
+                throw;
             }
 
-            var error = await errorTask;
-            await process.WaitForExitAsync(ct);
+            var error = await errorTask.ConfigureAwait(false);
 
             if (process.ExitCode != 0)
             {
-                _logger.Warning("Repository sync exited with code {ExitCode}", process.ExitCode);
-                if (!string.IsNullOrWhiteSpace(error))
-                {
-                    _logger.Warning("Repository sync stderr: {Error}", error);
-                    // Show first meaningful error line to user
-                    var firstError = error.Split('\n')
-                        .Select(l => l.Trim())
-                        .FirstOrDefault(l => l.Length > 0 && !l.StartsWith("WARNING:"));
-                    if (!string.IsNullOrEmpty(firstError))
-                        progress?.Report($"Sync warning: {firstError}");
-                }
+                var firstError = FirstMeaningfulLine(error);
+                _logger.Error("Repository sync exited with code {ExitCode}: {Error}", process.ExitCode, firstError);
+                throw new InvalidOperationException(
+                    $"Repository sync failed with exit code {process.ExitCode}: {firstError}");
             }
             else if (!string.IsNullOrWhiteSpace(error))
             {
@@ -307,6 +341,65 @@ public class RepositorySyncer
         finally
         {
             try { File.Delete(scriptPath); } catch { }
+        }
+    }
+
+    private static ProcessStartInfo CreatePowerShellStartInfo(string scriptPath)
+    {
+        var psi = new ProcessStartInfo
+        {
+            FileName = "powershell.exe",
+            UseShellExecute = false,
+            CreateNoWindow = true,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true
+        };
+        psi.ArgumentList.Add("-NoProfile");
+        psi.ArgumentList.Add("-NonInteractive");
+        psi.ArgumentList.Add("-ExecutionPolicy");
+        psi.ArgumentList.Add("Bypass");
+        psi.ArgumentList.Add("-File");
+        psi.ArgumentList.Add(scriptPath);
+        return psi;
+    }
+
+    private static string FirstMeaningfulLine(string error)
+    {
+        return error.Split('\n')
+            .Select(line => line.Trim())
+            .FirstOrDefault(line => line.Length > 0 && !line.StartsWith("WARNING:", StringComparison.OrdinalIgnoreCase))
+            ?? "No error details were provided.";
+    }
+
+    private static void TryKill(Process process)
+    {
+        try
+        {
+            if (!process.HasExited)
+                process.Kill(entireProcessTree: true);
+        }
+        catch (InvalidOperationException)
+        {
+            // The process exited between HasExited and Kill.
+        }
+        catch (System.ComponentModel.Win32Exception)
+        {
+            // Best effort during cancellation/timeout.
+        }
+    }
+
+    private static async Task StopProcessAsync(Process process)
+    {
+        TryKill(process);
+        try
+        {
+            await process.WaitForExitAsync(CancellationToken.None)
+                .WaitAsync(TimeSpan.FromSeconds(10))
+                .ConfigureAwait(false);
+        }
+        catch (TimeoutException)
+        {
+            // Do not turn cancellation into an unbounded wait.
         }
     }
 }

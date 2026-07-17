@@ -7,17 +7,18 @@ namespace HPPAQDeploy.Infrastructure.Data;
 
 public class DeviceGroupRepository : IDeviceGroupRepository
 {
-    private readonly AppDbContext _dbContext;
+    private readonly IDbContextFactory<AppDbContext> _dbContextFactory;
     private readonly ILogger _logger = Log.ForContext<DeviceGroupRepository>();
 
-    public DeviceGroupRepository(AppDbContext dbContext)
+    public DeviceGroupRepository(IDbContextFactory<AppDbContext> dbContextFactory)
     {
-        _dbContext = dbContext ?? throw new ArgumentNullException(nameof(dbContext));
+        _dbContextFactory = dbContextFactory ?? throw new ArgumentNullException(nameof(dbContextFactory));
     }
 
     public async Task<IReadOnlyList<DeviceGroup>> GetAllAsync(CancellationToken ct = default)
     {
-        return await _dbContext.DeviceGroups
+        await using var dbContext = await _dbContextFactory.CreateDbContextAsync(ct).ConfigureAwait(false);
+        return await dbContext.DeviceGroups
             .AsNoTracking()
             .OrderBy(g => g.Name)
             .ToListAsync(ct)
@@ -26,43 +27,55 @@ public class DeviceGroupRepository : IDeviceGroupRepository
 
     public async Task<DeviceGroup?> GetByNameAsync(string name, CancellationToken ct = default)
     {
-        return await _dbContext.DeviceGroups
+        await using var dbContext = await _dbContextFactory.CreateDbContextAsync(ct).ConfigureAwait(false);
+        return await dbContext.DeviceGroups
+            .AsNoTracking()
             .FirstOrDefaultAsync(g => g.Name == name, ct)
             .ConfigureAwait(false);
     }
 
     public async Task<DeviceGroup> CreateAsync(string name, string? description = null, CancellationToken ct = default)
     {
+        ArgumentException.ThrowIfNullOrWhiteSpace(name);
         var group = new DeviceGroup { Name = name.Trim(), Description = description?.Trim() };
-        _dbContext.DeviceGroups.Add(group);
-        await _dbContext.SaveChangesAsync(ct).ConfigureAwait(false);
+        await using var dbContext = await _dbContextFactory.CreateDbContextAsync(ct).ConfigureAwait(false);
+        dbContext.DeviceGroups.Add(group);
+        await dbContext.SaveChangesAsync(ct).ConfigureAwait(false);
         _logger.Information("Created group: {Name}", name);
         return group;
     }
 
     public async Task UpdateAsync(DeviceGroup group, CancellationToken ct = default)
     {
-        _dbContext.DeviceGroups.Update(group);
-        await _dbContext.SaveChangesAsync(ct).ConfigureAwait(false);
+        ArgumentNullException.ThrowIfNull(group);
+        await using var dbContext = await _dbContextFactory.CreateDbContextAsync(ct).ConfigureAwait(false);
+        dbContext.DeviceGroups.Update(group);
+        await dbContext.SaveChangesAsync(ct).ConfigureAwait(false);
         _logger.Information("Updated group: {Name}", group.Name);
     }
 
     public async Task DeleteAsync(string name, CancellationToken ct = default)
     {
-        var group = await _dbContext.DeviceGroups.FirstOrDefaultAsync(g => g.Name == name, ct);
+        await using var dbContext = await _dbContextFactory.CreateDbContextAsync(ct).ConfigureAwait(false);
+        await using var transaction = await dbContext.Database.BeginTransactionAsync(ct).ConfigureAwait(false);
+        var group = await dbContext.DeviceGroups.FirstOrDefaultAsync(g => g.Name == name, ct).ConfigureAwait(false);
         if (group != null)
         {
-            _dbContext.DeviceGroups.Remove(group);
-            var devices = await _dbContext.Devices.Where(d => d.GroupName == name).ToListAsync(ct);
-            foreach (var d in devices) d.GroupName = null;
-            await _dbContext.SaveChangesAsync(ct).ConfigureAwait(false);
-            _logger.Information("Deleted group: {Name}, unassigned {Count} devices", name, devices.Count);
+            dbContext.DeviceGroups.Remove(group);
+            var unassignedCount = await dbContext.Devices
+                .Where(d => d.GroupName == name)
+                .ExecuteUpdateAsync(setters => setters.SetProperty(d => d.GroupName, (string?)null), ct)
+                .ConfigureAwait(false);
+            await dbContext.SaveChangesAsync(ct).ConfigureAwait(false);
+            await transaction.CommitAsync(ct).ConfigureAwait(false);
+            _logger.Information("Deleted group: {Name}, unassigned {Count} devices", name, unassignedCount);
         }
     }
 
     public async Task<bool> ExistsAsync(string name, CancellationToken ct = default)
     {
-        return await _dbContext.DeviceGroups
+        await using var dbContext = await _dbContextFactory.CreateDbContextAsync(ct).ConfigureAwait(false);
+        return await dbContext.DeviceGroups
             .AnyAsync(g => g.Name == name, ct)
             .ConfigureAwait(false);
     }
